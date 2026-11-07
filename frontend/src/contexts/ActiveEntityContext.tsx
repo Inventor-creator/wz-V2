@@ -1,8 +1,6 @@
 import { createContext, useContext, useState, useEffect, type ReactNode, type FC } from "react";
 import api from "../api";
 
-// This context tracks the "active entity" for multi-entity scoping and sends
-// it as a request header to the backend on every request.
 interface ActiveEntityContextType {
     activeEntityId: number | null;
     setActiveEntityId: (id: number | null) => void;

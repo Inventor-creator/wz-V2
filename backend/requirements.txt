@@ -1,10 +1,10 @@
 fastapi
 uvicorn[standard]
-sqlalchemy
-psycopg2-binary
+supabase>=2.0,<3.0
 pydantic-settings
 python-dotenv
 authlib
+google-auth[requests]>=2.0,<3.0
 itsdangerous
 httpx
 email-validator

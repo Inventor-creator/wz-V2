@@ -1,77 +1,40 @@
-# MyApp Frontend
+# Workout Zone frontend
 
-A React 19 + TypeScript + Vite + Tailwind CSS frontend scaffold.
+Functional role-aware gym management built with the existing React 19, strict TypeScript, Vite, Tailwind and npm setup. UI styles are reused from the **wzv2 OpenDesign** project.
 
-This is a **skeleton**: auth, routing, theming, layout, and the API client are
-wired up, while all domain views have been gutted to placeholder stubs that you
-fill in.
+## Start
 
-## Stack
-
-- **React 19** + **TypeScript**
-- **Vite 8** (with React Compiler + Tailwind CSS v4)
-- **React Router 7**
-- **Axios** (with a configured API client)
-- **Recharts** (available for charts)
-
-## What is already working
-
-| Area | File | Status |
-|------|------|--------|
-| Build / dev / lint config | `vite.config.ts`, `tsconfig*`, `eslint.config.js` | Ready |
-| Theme (light/dark) | `contexts/ThemeContext.tsx`, `components/ThemeToggle.tsx` | Ready |
-| API client | `api.ts` | Ready |
-| Multi-entity scoping (X-Gym-Id header) | `contexts/ActiveEntityContext.tsx` | Ready |
-| Auth guard | `components/ProtectedRoute.tsx` | Ready |
-| Routing + shell | `App.tsx`, `pages/*`, `components/Sidebar.tsx` | Ready |
-| Responsive shell | `Dashboard.tsx` + `components/mobile/*` | Ready |
-
-## What you need to implement
-
-- **`components/*View.tsx`** and **`components/mobile/*`** — replace the
-  placeholder `TODO` views with your real feature UI
-- **`pages/AdminDashboard.tsx`** and **`pages/SelectGym.tsx`** — fill in the
-  admin and selection logic
-
-## Setup
-
-```bash
-npm install
-cp .env.example .env        # optional - override VITE_API_URL
+```sh
+npm ci
 npm run dev
 ```
 
-The app will be available at `http://localhost:5173`.
+Open `http://localhost:5173` and use **Continue with Google**. Backend authentication is enabled by default. Keep the backend running at `http://localhost:8080`.
 
-## Scripts
+For the isolated demo only, set `VITE_MOCK_API=true` in `.env.local`, restart Vite, and enter `admin@form.example` in **Open demo workspace**. Demo sessions reset on reload and do not read Google login cookies. Other seeded emails and integration requirements are in [IMPLEMENTATION.md](IMPLEMENTATION.md).
 
-| Command           | Description                     |
-|-------------------|----------------------------------|
-| `npm run dev`     | Start the Vite dev server        |
-| `npm run build`   | Type-check and build for production |
-| `npm run lint`    | Run ESLint                       |
-| `npm run preview` | Preview the production build     |
+**Continue with Google** uses the existing backend OAuth flow. The demo sign-in is explicitly simulated and does not authenticate with Google. Changes reset on reload. Production builds cannot enable mocks.
 
-## Project Structure
+## Checks
 
-```
-frontend/
-├── src/
-│   ├── api.ts               # Axios instance (base URL, credentials)
-│   ├── App.tsx              # Route definitions
-│   ├── contexts/            # ThemeContext, ActiveEntityContext (X-* header)
-│   ├── hooks/               # useMediaQuery
-│   ├── pages/               # LoginPage, LoginError, Select, Dashboard, Admin
-│   └── components/          # Sidebar, ProtectedRoute, ThemeToggle, *View stubs
-│       └── mobile/          # Mobile-specific shell + view stubs
-└── vite.config.ts
+```sh
+npm run lint
+npm run typecheck
+npm test
+npm run build
+npm run preview
 ```
 
-## Conventions
+## Features
 
-- The backend scopes most endpoints by an `X-Gym-Id` request header. The
-  `ActiveEntityContext` sets that header whenever an entity is selected. Adjust
-  the header name in `ActiveEntityContext.tsx` if your backend uses a different
-  one.
-- Type-only imports must use `import type { ... }` (`verbatimModuleSyntax`).
-- Unused locals/parameters fail the build, so keep stubs clean as you develop.
+- Protected routes and permission-based navigation for four roles.
+- Members, separate gym/PT subscriptions, contact edits, archive confirmation and history.
+- Membership plans, trainers and trainer-specific PT plans with validated forms.
+- Trainer-scoped dashboard with expiry sorting and configured payout estimates.
+- Billing preview, confirmation and development idempotency protection.
+- Outstanding fees, partial payment logging and payment receipts.
+- Date-filtered finance KPIs, Recharts reports and payout breakdowns.
+- Super Admin email authorization, role changes, trainer links and last-admin protection.
+- Responsive OpenDesign shell, accessible native dialogs, loading/error/empty states.
+
+See [IMPLEMENTATION.md](IMPLEMENTATION.md) for the source map, backend contracts, design deviations, financial/date policies and known limitations. The existing backend needs gym domain APIs and trusted role/status fields before production use. Frontend guards and mock contract tests do not provide backend security.
