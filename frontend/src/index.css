@@ -1,0 +1,62 @@
+@import "tailwindcss";
+
+@theme {
+    --color-brand-bg: oklch(98% 0.005 250);
+    --color-brand-surface: oklch(100% 0 0);
+    --color-brand-fg: oklch(22% 0.02 240);
+    --color-brand-muted: oklch(50% 0.018 240);
+    --color-brand-border: oklch(90% 0.008 240);
+    --color-brand-accent: oklch(58% 0.16 145);
+    --color-trend-up: oklch(65% 0.15 145);
+    --color-trend-down: oklch(60% 0.15 25);
+    --color-status-active-bg: oklch(95% 0.05 145);
+    --color-status-active-fg: oklch(50% 0.15 145);
+    --color-status-pending-bg: oklch(95% 0.05 70);
+    --color-status-pending-fg: oklch(60% 0.15 70);
+    --color-status-canceled-bg: oklch(95% 0.05 25);
+    --color-status-canceled-fg: oklch(50% 0.15 25);
+
+    --font-display:
+        -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui,
+        sans-serif;
+    --font-body:
+        -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui,
+        sans-serif;
+    --font-mono:
+        "JetBrains Mono", "IBM Plex Mono", ui-monospace, Menlo, monospace;
+
+    --spacing-header: 64px;
+    --spacing-sidebar: 240px;
+}
+
+.dark {
+    --color-brand-bg: oklch(15% 0.01 240);
+    --color-brand-surface: oklch(12% 0.01 240);
+    --color-brand-fg: oklch(95% 0.01 240);
+    --color-brand-muted: oklch(65% 0.01 240);
+    --color-brand-border: oklch(25% 0.02 240);
+    --color-brand-accent: oklch(65% 0.16 145);
+}
+
+@layer base {
+    body {
+        @apply bg-brand-bg text-brand-fg font-body antialiased text-[14px] leading-normal;
+    }
+
+    h1,
+    h2,
+    h3,
+    h4 {
+        @apply font-display font-semibold tracking-tight;
+    }
+}
+
+@layer components {
+    .mono {
+        @apply font-mono tabular-nums;
+    }
+
+    .status-pill {
+        @apply px-2 py-0.5 rounded-full text-[11px] font-semibold uppercase;
+    }
+}
