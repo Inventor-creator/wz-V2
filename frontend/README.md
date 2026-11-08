@@ -20,6 +20,11 @@ When granting Trainer access, select **Create and link a new trainer** and enter
 the name/optional phone, or link an existing profile. Apply backend migration
 `004` after `001`–`003` first; see `backend/docs/trainer_dashboard.md`.
 
+Membership Plans supports live create/edit/delete with its own API queries.
+Apply backend migration `005` after `001`–`004`. Referenced plans are removed from
+the catalogue while historical memberships and invoices are retained; unused plans
+are permanently deleted. See `backend/docs/membership_plans.md`.
+
 ## Checks
 
 ```sh

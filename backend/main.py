@@ -4,6 +4,7 @@ from config import configure_middleware
 from Routes.authRoutes import router as auth_router
 from Routes.accessRoutes import router as access_router
 from Routes.trainerRoutes import router as trainer_router
+from Routes.membershipRoutes import router as membership_router
 
 app = FastAPI(title="MyApp Backend")
 configure_middleware(app)
@@ -12,6 +13,7 @@ configure_middleware(app)
 app.include_router(auth_router)
 app.include_router(access_router)
 app.include_router(trainer_router)
+app.include_router(membership_router)
 
 
 @app.get("/")

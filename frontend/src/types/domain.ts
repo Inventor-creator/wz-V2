@@ -19,6 +19,8 @@ export interface Member {
   notes?: string;
 }
 export interface GymMembershipPlan {
+  activeMembersCount?: number;
+  hasHistory?: boolean;
   id: string;
   name: string;
   price: number;
@@ -26,6 +28,10 @@ export interface GymMembershipPlan {
   durationUnit: DurationUnit;
   description: string;
   isActive: boolean;
+}
+export interface MembershipPlanDeletion {
+  id: string;
+  mode: "DELETED" | "REMOVED_FROM_CATALOG";
 }
 export interface Trainer {
   id: string;

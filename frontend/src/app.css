@@ -87,7 +87,92 @@ dialog input[type="checkbox"] {
 .detail-grid small {
   color: var(--muted);
 }
+.membership-toolbar {
+  margin-bottom: 24px;
+  gap: 12px;
+}
+.membership-toolbar > input {
+  flex: 1 1 260px;
+  max-width: 420px;
+}
+.membership-toolbar > select {
+  flex: 0 0 160px;
+}
+.membership-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.membership-card > .badge {
+  align-self: flex-start;
+}
+.membership-card h2 {
+  overflow-wrap: anywhere;
+}
+.membership-card .plan-description {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  margin-bottom: 24px;
+}
+.membership-card .price {
+  margin-top: auto;
+  margin-bottom: 0;
+  overflow-wrap: anywhere;
+}
+.membership-card .price small {
+  display: block;
+  margin-top: 6px;
+}
+.membership-card .bottom {
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.membership-card .bottom .actions {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.membership-card .plan-member-count {
+  white-space: nowrap;
+}
+.plan-availability {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--fg);
+  font-size: 12px;
+  cursor: pointer;
+}
+.plan-availability input {
+  flex: 0 0 20px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--accent);
+}
+.plan-availability strong {
+  display: block;
+  font-weight: 500;
+}
+.plan-availability small {
+  display: block;
+  color: var(--muted);
+  margin-top: 3px;
+}
+.plan-form-note {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.6;
+}
 @media (max-width: 650px) {
+  .membership-toolbar > input,
+  .membership-toolbar > select {
+    flex: 1 1 100%;
+    max-width: none;
+    width: 100%;
+  }
   .rechart {
     padding: 16px 4px;
   }

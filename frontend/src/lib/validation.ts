@@ -32,11 +32,11 @@ export const memberSchema = z
       });
   });
 export const planSchema = z.object({
-  name: z.string().trim().min(2),
-  price: z.number().positive(),
-  duration: z.number().int().min(1),
+  name: z.string().trim().min(2).max(120),
+  price: z.number().nonnegative().max(9999999999.99).multipleOf(0.01),
+  duration: z.number().int().min(1).max(36500),
   durationUnit: z.enum(["DAY", "MONTH", "YEAR"]),
-  description: z.string().trim().min(3),
+  description: z.string().trim().max(2000),
   isActive: z.boolean(),
 });
 export const paymentSchema = (balance: number) =>

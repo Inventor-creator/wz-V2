@@ -8,6 +8,11 @@ The trainer dashboard and atomic create-and-link trainer onboarding are also
 implemented. Apply migration `004` after `001`–`003`; see
 [`docs/trainer_dashboard.md`](docs/trainer_dashboard.md) for routes and payout policy.
 
+Membership plan create/edit/delete routes are implemented as well. Apply migration
+`005` after `001`–`004`; see [`docs/membership_plans.md`](docs/membership_plans.md).
+Referenced plans are removed from the catalogue without deleting subscription or
+financial history. Duration is stored in fixed calendar days.
+
 A FastAPI + Supabase Python API scaffold with Google OAuth login.
 
 This is a **skeleton**: the infrastructure is wired up and working, while all
