@@ -9,10 +9,21 @@ import type {
   GymMembershipPlan,
   Trainer,
   PersonalTrainingPlan,
+  AccessGrantInput,
+  TrainerDashboardData,
+  TrainerDashboardFilters,
+  TrainerMemberData,
+  TrainingDashboardRow,
 } from "../types/domain";
 import { groupBy } from "./groupBy";
 import { seed } from "../mocks/seed";
-import { calculateEndDate, isMembershipExpired, today } from "./dates";
+import {
+  calculateEndDate,
+  isMembershipExpired,
+  today,
+  calculateDaysRemaining,
+  getMembershipStatus,
+} from "./dates";
 import { canAccess, roles } from "./permissions";
 import { memberSchema, paymentSchema, planSchema } from "./validation";
 export const MOCK_MODE =
@@ -121,6 +132,66 @@ export const auth = {
   },
 };
 export const api = {
+  trainerDashboard: {
+    options: () =>
+      MOCK_MODE
+        ? action(
+            "/trainer",
+            "GET",
+            "/trainer/options",
+            undefined,
+            () => scoped().trainers,
+          )
+        : request<Trainer[]>("GET", "/trainer/options"),
+    get: (filters: TrainerDashboardFilters = {}) => {
+      if (MOCK_MODE)
+        return action("/trainer", "GET", "/trainer/dashboard", undefined, () =>
+          mockTrainerDashboard(filters),
+        );
+      const params = new URLSearchParams();
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value !== undefined && value !== "") params.set(key, String(value));
+      });
+      return request<TrainerDashboardData>(
+        "GET",
+        "/trainer/dashboard?" + params.toString(),
+      );
+    },
+    member: (id: string, trainerId?: string) => {
+      if (!MOCK_MODE)
+        return request<TrainerMemberData>(
+          "GET",
+          `/trainer/members/${encodeURIComponent(id)}` +
+            (trainerId ? "?trainerId=" + encodeURIComponent(trainerId) : ""),
+        );
+      return action(
+        "/trainer",
+        "GET",
+        "/trainer/members/" + id,
+        undefined,
+        () => {
+          const dashboard = mockTrainerDashboard({
+            trainerId,
+            pageSize: 100000,
+          });
+          const history = dashboard.rows.filter((r) => r.memberId === id);
+          const member = scoped().members.find((m) => m.id === id);
+          if (!history.length || !member)
+            throw new Error("Assigned member not found");
+          return {
+            member: {
+              id: member.id,
+              fullName: member.fullName,
+              email: member.email,
+              phone: member.phone,
+              joiningDate: member.joiningDate,
+            },
+            trainingHistory: history,
+          };
+        },
+      );
+    },
+  },
   snapshot: () =>
     MOCK_MODE
       ? Promise.resolve(clone(scoped()))
@@ -370,9 +441,13 @@ export const api = {
         undefined,
         () => db.accessAssignments,
       ),
-    create: (v: Pick<RoleAssignment, "email" | "role" | "trainerId">) =>
-      saveAccess(v),
-    update: (id: string, v: Partial<RoleAssignment>) => saveAccess(v, id),
+    create: (v: AccessGrantInput) => saveAccess(v),
+    update: (
+      id: string,
+      v: Partial<RoleAssignment> & {
+        newTrainer?: AccessGrantInput["newTrainer"];
+      },
+    ) => saveAccess(v, id),
     revoke: (id: string) => saveAccess({ status: "REVOKED" }, id),
   },
   payouts: {
@@ -493,13 +568,38 @@ function saveTrainer(v: Omit<Trainer, "id">, id?: string) {
     },
   );
 }
-function saveAccess(v: Partial<RoleAssignment>, id?: string) {
+function saveAccess(
+  input: Partial<RoleAssignment> & {
+    newTrainer?: AccessGrantInput["newTrainer"];
+  },
+  id?: string,
+) {
   return action(
     "/access-management",
     id ? "PATCH" : "POST",
     "/access-assignments" + (id ? "/" + id : ""),
-    v,
+    input,
     () => {
+      const { newTrainer, ...v } = input;
+      if (v.email) v.email = v.email.trim().toLowerCase();
+      let profile: Trainer | undefined;
+      if (newTrainer) {
+        if (v.role !== "GYM_TRAINER" || v.trainerId)
+          throw new Error("Choose one existing or new trainer profile");
+        if (newTrainer.name.trim().length < 2)
+          throw new Error("Enter a trainer name");
+        profile = {
+          id: uid(),
+          name: newTrainer.name.trim(),
+          email:
+            v.email ||
+            db.accessAssignments.find((a) => a.id === id)?.email ||
+            "",
+          phone: newTrainer.phone || "",
+          isActive: true,
+        };
+        v.trainerId = profile.id;
+      }
       const old = db.accessAssignments.find((a) => a.id === id);
       const next = { ...old, ...v };
       if (next.role === "GYM_TRAINER" && !next.trainerId)
@@ -531,6 +631,7 @@ function saveAccess(v: Partial<RoleAssignment>, id?: string) {
       };
       if (old) Object.assign(old, v);
       else db.accessAssignments.push(assignment);
+      if (profile) db.trainers.push(profile);
       if (
         id === session?.id &&
         (v.role !== undefined ||
@@ -543,6 +644,100 @@ function saveAccess(v: Partial<RoleAssignment>, id?: string) {
       return assignment;
     },
   );
+}
+function mockTrainerDashboard(
+  filters: TrainerDashboardFilters,
+): TrainerDashboardData {
+  const data = scoped();
+  if (
+    session?.role === "GYM_TRAINER" &&
+    filters.trainerId &&
+    filters.trainerId !== session.trainerId
+  )
+    throw new Error("Other trainer forbidden");
+  const trainer =
+    data.trainers.find(
+      (t) => t.id === (filters.trainerId || session?.trainerId),
+    ) ||
+    (!filters.trainerId ? data.trainers[0] : undefined) ||
+    null;
+  if (filters.trainerId && !trainer) throw new Error("Trainer not found");
+  const rows: TrainingDashboardRow[] = data.trainingSubscriptions
+    .filter((s) => s.trainerId === trainer?.id && s.status === "ACTIVE")
+    .flatMap<TrainingDashboardRow>((s) => {
+      const m = data.members.find(
+        (m) => m.id === s.memberId && m.status === "ACTIVE",
+      );
+      if (!m) return [];
+      return [
+        {
+          id: s.id,
+          memberId: m.id,
+          fullName: m.fullName,
+          email: m.email,
+          phone: m.phone,
+          planId: s.planId,
+          planName:
+            data.personalTrainingPlans.find((p) => p.id === s.planId)?.name ||
+            "Training plan",
+          startDate: s.startDate,
+          endDate: s.endDate,
+          daysRemaining: calculateDaysRemaining(s.endDate),
+          priceAtPurchase: s.priceAtPurchase,
+          status:
+            calculateDaysRemaining(s.startDate) > 0
+              ? "Upcoming"
+              : getMembershipStatus(s.endDate),
+        },
+      ];
+    })
+    .sort(
+      (a, b) =>
+        a.daysRemaining - b.daysRemaining ||
+        a.fullName.localeCompare(b.fullName),
+    );
+  const filtered = rows.filter(
+    (r) =>
+      r.fullName.toLowerCase().includes((filters.search || "").toLowerCase()) &&
+      (!filters.planId || r.planId === filters.planId) &&
+      (!filters.status || r.status === filters.status),
+  );
+  const pageSize = filters.pageSize || 8;
+  const page = Math.min(
+    filters.page || 1,
+    Math.max(1, Math.ceil(filtered.length / pageSize)),
+  );
+  const configured = data.payoutConfigurations.some(
+    (p) => p.trainerId === trainer?.id,
+  );
+  return {
+    trainer,
+    rows: filtered.slice((page - 1) * pageSize, page * pageSize),
+    plans: Array.from(
+      new Map(
+        rows.map((r) => [r.planId, { id: r.planId, name: r.planName }]),
+      ).values(),
+    ),
+    total: filtered.length,
+    page,
+    pageSize,
+    summary: {
+      totalAssignedMembers: new Set(rows.map((r) => r.memberId)).size,
+      activeTrainingMembers: new Set(
+        rows
+          .filter((r) => r.status === "Active" || r.status === "Expiring Soon")
+          .map((r) => r.memberId),
+      ).size,
+      planValue: rows.reduce((s, r) => s + r.priceAtPurchase, 0),
+      estimatedPayout: null,
+      payoutStatus: configured ? "REVIEW_REQUIRED" : "NOT_CONFIGURED",
+      payoutNote: configured
+        ? "Development fixtures have no line-level payment allocations; no payout is assumed."
+        : "No configured payout rule.",
+      periodStart: today().slice(0, 7) + "-01",
+      periodEnd: today(),
+    },
+  };
 }
 export function resetMock() {
   db = seed();

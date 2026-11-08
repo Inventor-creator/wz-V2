@@ -4,6 +4,10 @@ Access-management routes are implemented and registered. See
 [`docs/access_management.md`](docs/access_management.md) for required migrations,
 endpoint contracts, permissions, audit/history semantics and deployment checks.
 
+The trainer dashboard and atomic create-and-link trainer onboarding are also
+implemented. Apply migration `004` after `001`–`003`; see
+[`docs/trainer_dashboard.md`](docs/trainer_dashboard.md) for routes and payout policy.
+
 A FastAPI + Supabase Python API scaffold with Google OAuth login.
 
 This is a **skeleton**: the infrastructure is wired up and working, while all

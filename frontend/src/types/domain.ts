@@ -91,6 +91,56 @@ export interface RoleAssignment {
   grantedAt: string;
   trainerId?: string | null;
 }
+export interface AccessGrantInput {
+  email: string;
+  role: Role;
+  trainerId?: string | null;
+  newTrainer?: { name: string; phone?: string };
+}
+export interface TrainingDashboardRow {
+  id: string;
+  memberId: string;
+  fullName: string;
+  email: string;
+  phone: string;
+  planId: string;
+  planName: string;
+  startDate: string;
+  endDate: string;
+  daysRemaining: number;
+  priceAtPurchase: number;
+  status: "Active" | "Expired" | "Expiring Soon" | "Upcoming";
+}
+export interface TrainerDashboardData {
+  trainer: Trainer | null;
+  summary: {
+    totalAssignedMembers: number;
+    activeTrainingMembers: number;
+    planValue: number;
+    estimatedPayout: number | null;
+    payoutStatus: "CONFIGURED" | "NOT_CONFIGURED" | "REVIEW_REQUIRED";
+    payoutNote: string;
+    periodStart: string;
+    periodEnd: string;
+  };
+  rows: TrainingDashboardRow[];
+  plans: { id: string; name: string }[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+export interface TrainerDashboardFilters {
+  trainerId?: string;
+  search?: string;
+  planId?: string;
+  status?: string;
+  page?: number;
+  pageSize?: number;
+}
+export interface TrainerMemberData {
+  member: Pick<Member, "id" | "fullName" | "email" | "phone" | "joiningDate">;
+  trainingHistory: TrainingDashboardRow[];
+}
 export type TrainerPayoutConfiguration = { trainerId: string } & (
   | { payoutType: "COMMISSION"; commissionRate: number }
   | { payoutType: "FIXED"; fixedAmount: number }

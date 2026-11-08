@@ -15,6 +15,11 @@ For the isolated demo only, set `VITE_MOCK_API=true` in `.env.local`, restart Vi
 
 **Continue with Google** uses the existing backend OAuth flow. The demo sign-in is explicitly simulated and does not authenticate with Google. Changes reset on reload. Production builds cannot enable mocks.
 
+The trainer dashboard uses dedicated backend routes, not the workspace snapshot.
+When granting Trainer access, select **Create and link a new trainer** and enter
+the name/optional phone, or link an existing profile. Apply backend migration
+`004` after `001`–`003` first; see `backend/docs/trainer_dashboard.md`.
+
 ## Checks
 
 ```sh

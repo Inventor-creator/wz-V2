@@ -27,7 +27,6 @@ const trainerSchema = z.object({
   email: z.email(),
   phone: z.string().regex(/^(\+91[ -]?)?[6-9]\d{9}$/),
   isActive: z.boolean(),
-  userId: z.string().optional(),
 });
 export function TrainerForm({
   trainer,
@@ -42,12 +41,11 @@ export function TrainerForm({
     formState: { errors },
   } = useForm<Omit<Trainer, "id">>({
     resolver: zodResolver(trainerSchema),
-    defaultValues: trainer || {
-      name: "",
-      email: "",
-      phone: "",
-      isActive: true,
-      userId: "",
+    defaultValues: {
+      name: trainer?.name || "",
+      email: trainer?.email || "",
+      phone: trainer?.phone || "",
+      isActive: trainer?.isActive ?? true,
     },
   });
   const save = useAction(
@@ -72,9 +70,10 @@ export function TrainerForm({
         <Field label="Phone" error={errors.phone?.message}>
           <input {...register("phone")} />
         </Field>
-        <Field label="Google user ID (optional)">
-          <input {...register("userId")} />
-        </Field>
+        <p className="text-muted">
+          App login is linked through Access Management, not a Google user ID on
+          this profile.
+        </p>
         <Field label="Active">
           <input type="checkbox" {...register("isActive")} />
         </Field>

@@ -1,14 +1,10 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
+import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { useAuth } from "../auth/AuthProvider";
+import { api } from "../../lib/api";
+import { dateLabel, money } from "../../lib/dates";
 import {
-  calculateDaysRemaining,
-  dateLabel,
-  getMembershipStatus,
-  money,
-} from "../../lib/dates";
-import {
-  useWorkspace,
   PageHeader,
   StatCard,
   DataTable,
@@ -17,178 +13,243 @@ import {
   Modal,
   LoadingSkeleton,
   ErrorState,
+  EmptyState,
 } from "../../components/ui";
+
 export function TrainerDashboard() {
-  const q = useWorkspace();
   const { user } = useAuth();
-  const [selected, setSelected] = useState("");
-  const [search, setSearch] = useState("");
-  const [plan, setPlan] = useState("");
-  const [status, setStatus] = useState("");
+  const [params, setParams] = useSearchParams();
   const [detail, setDetail] = useState("");
+  const canChoose = user?.role !== "GYM_TRAINER";
+  const trainerId = canChoose ? params.get("trainer") || undefined : undefined;
+  const search = params.get("q") || "";
+  const planId = params.get("plan") || "";
+  const status = params.get("status") || "";
+  const page = Math.max(1, Number(params.get("page")) || 1);
+  const filters = { trainerId, search, planId, status, page, pageSize: 8 };
+  const options = useQuery({
+    queryKey: ["trainer-options"],
+    queryFn: api.trainerDashboard.options,
+    enabled: canChoose,
+  });
+  const q = useQuery({
+    queryKey: ["trainer-dashboard", filters],
+    queryFn: () => api.trainerDashboard.get(filters),
+    placeholderData: keepPreviousData,
+  });
+  const selected = q.data?.trainer?.id;
+  const member = useQuery({
+    queryKey: ["trainer-member", selected, detail],
+    queryFn: () => api.trainerDashboard.member(detail, selected),
+    enabled: !!detail && !!selected,
+  });
+  const set = (key: string, value: string) =>
+    setParams((p) => {
+      p.set(key, value);
+      if (key !== "page") p.set("page", "1");
+      if (key === "trainer") p.delete("plan");
+      return p;
+    });
   if (q.isPending) return <LoadingSkeleton />;
-  if (!q.data) return <ErrorState error={q.error} />;
-  const db = q.data;
-  const trainerId =
-    user?.role === "GYM_TRAINER"
-      ? user.trainerId
-      : selected || db.trainers[0]?.id;
-  const all = db.trainingSubscriptions.filter(
-    (s) => s.trainerId === trainerId && s.status === "ACTIVE",
-  );
-  const member = (id: string) => db.members.find((m) => m.id === id);
-  const rows = all
-    .filter(
-      (s) =>
-        member(s.memberId)
-          ?.fullName.toLowerCase()
-          .includes(search.toLowerCase()) &&
-        (!plan || s.planId === plan) &&
-        (!status || getMembershipStatus(s.endDate) === status),
-    )
-    .sort(
-      (a, b) =>
-        calculateDaysRemaining(a.endDate) - calculateDaysRemaining(b.endDate),
-    );
-  const value = all.reduce((n, s) => n + s.priceAtPurchase, 0);
-  const payout = db.payoutConfigurations.find((p) => p.trainerId === trainerId);
-  const m = member(detail);
+  if (!q.data)
+    return <ErrorState error={q.error} retry={() => void q.refetch()} />;
+  const data = q.data;
+  const summary = data.summary;
   return (
     <>
       <PageHeader
         title="Trainer dashboard"
         description="Your members. Their progress. One place."
       >
-        {user?.role !== "GYM_TRAINER" && (
+        {canChoose && (
           <select
             aria-label="Choose trainer"
-            value={trainerId}
+            value={trainerId || selected || ""}
             onChange={(e) => {
-              setSelected(e.target.value);
-              setPlan("");
+              set("trainer", e.target.value);
+              setDetail("");
             }}
           >
-            {db.trainers.map((t) => (
-              <option value={t.id} key={t.id}>
+            <option value="" disabled>
+              Select a trainer
+            </option>
+            {options.data?.map((t) => (
+              <option key={t.id} value={t.id}>
                 {t.name}
+                {!t.isActive ? " (inactive)" : ""}
               </option>
             ))}
           </select>
         )}
       </PageHeader>
-      <div className="metrics four">
-        <StatCard
-          main
-          label="Total Assigned Members"
-          value={new Set(all.map((s) => s.memberId)).size}
+      {q.isFetching && (
+        <p role="status" className="text-muted">
+          Updating dashboard…
+        </p>
+      )}
+      {options.error && (
+        <ErrorState
+          error={options.error}
+          retry={() => void options.refetch()}
         />
-        <StatCard
-          label="Active Training Members"
-          value={
-            new Set(
-              all
-                .filter((s) => calculateDaysRemaining(s.endDate) >= 0)
-                .map((s) => s.memberId),
-            ).size
-          }
-        />
-        <StatCard
-          label="Total PT Plan Value"
-          value={money(value)}
-          note="Recorded subscription value, not collections"
-        />
-        <StatCard
-          label="Estimated Trainer Payout"
-          value={
-            payout
-              ? money(
-                  payout.payoutType === "COMMISSION"
-                    ? (value * payout.commissionRate) / 100
-                    : payout.fixedAmount,
-                )
-              : "Not Configured"
-          }
-          note="Estimate based on configured payout rules"
-        />
-      </div>
-      <div className="toolbar panel">
-        <input
-          aria-label="Search assigned members"
-          placeholder="Search members…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-        <select
-          aria-label="PT plan filter"
-          value={plan}
-          onChange={(e) => setPlan(e.target.value)}
+      )}
+      {!data.trainer ? (
+        <EmptyState text="No trainer profiles yet. Create and link one from Access Management when granting trainer access." />
+      ) : (
+        <>
+          <div className="metrics four">
+            <StatCard
+              main
+              label="Total Assigned Members"
+              value={summary.totalAssignedMembers}
+            />
+            <StatCard
+              label="Active Training Members"
+              value={summary.activeTrainingMembers}
+            />
+            <StatCard
+              label="Total PT Plan Value"
+              value={money(summary.planValue)}
+              note="Non-cancelled subscription value, not collections"
+            />
+            <StatCard
+              label="Estimated Trainer Payout"
+              value={
+                summary.estimatedPayout !== null
+                  ? money(summary.estimatedPayout)
+                  : summary.payoutStatus === "NOT_CONFIGURED"
+                    ? "Not Configured"
+                    : "Needs Review"
+              }
+              note="This month · unsettled collected PT fees"
+            />
+          </div>
+          <div className="notice">
+            <strong>
+              Payout estimate · {dateLabel(summary.periodStart)} –{" "}
+              {dateLabel(summary.periodEnd)}:{" "}
+            </strong>
+            {summary.payoutNote}
+          </div>
+          <div className="toolbar panel">
+            <input
+              aria-label="Search assigned members"
+              placeholder="Search members…"
+              maxLength={120}
+              value={search}
+              onChange={(e) => set("q", e.target.value)}
+            />
+            <select
+              aria-label="PT plan filter"
+              value={planId}
+              onChange={(e) => set("plan", e.target.value)}
+            >
+              <option value="">All training plans</option>
+              {data.plans.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <select
+              aria-label="Training status filter"
+              value={status}
+              onChange={(e) => set("status", e.target.value)}
+            >
+              <option value="">All statuses</option>
+              {["Active", "Expired", "Expiring Soon", "Upcoming"].map((s) => (
+                <option key={s}>{s}</option>
+              ))}
+            </select>
+          </div>
+          <DataTable
+            rows={data.rows}
+            pageSize={data.pageSize}
+            pagination={{
+              page: data.page,
+              total: data.total,
+              onChange: (p) => set("page", String(p)),
+            }}
+            columns={[
+              { label: "Sr No", render: (_, i) => i + 1 },
+              {
+                label: "Member name",
+                render: (r) => (
+                  <button
+                    className="link-btn"
+                    onClick={() => setDetail(r.memberId)}
+                  >
+                    <Person name={r.fullName} />
+                  </button>
+                ),
+              },
+              {
+                label: "Contact",
+                render: (r) => (
+                  <>
+                    {r.phone}
+                    <small>{r.email}</small>
+                  </>
+                ),
+              },
+              { label: "PT plan", render: (r) => r.planName },
+              { label: "Start date", render: (r) => dateLabel(r.startDate) },
+              { label: "End date", render: (r) => dateLabel(r.endDate) },
+              { label: "Days remaining ↑", render: (r) => r.daysRemaining },
+              { label: "Plan cost", render: (r) => money(r.priceAtPurchase) },
+              {
+                label: "Status",
+                render: (r) => <StatusBadge status={r.status} />,
+              },
+            ]}
+          />
+        </>
+      )}
+      {detail && (
+        <Modal
+          title={member.data?.member.fullName || "Training member"}
+          onClose={() => setDetail("")}
         >
-          <option value="">All training plans</option>
-          {db.personalTrainingPlans
-            .filter((p) => p.trainerId === trainerId)
-            .map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-        </select>
-        <select
-          aria-label="Training status filter"
-          value={status}
-          onChange={(e) => setStatus(e.target.value)}
-        >
-          <option value="">All statuses</option>
-          {["Active", "Expired", "Expiring Soon"].map((s) => (
-            <option key={s}>{s}</option>
-          ))}
-        </select>
-      </div>
-      <DataTable
-        rows={rows}
-        columns={[
-          { label: "Sr No", render: (_, i) => i + 1 },
-          {
-            label: "Member name",
-            render: (s) => (
-              <button
-                className="link-btn"
-                onClick={() => setDetail(s.memberId)}
-              >
-                <Person
-                  name={member(s.memberId)?.fullName || "Archived member"}
-                />
-              </button>
-            ),
-          },
-          { label: "Contact", render: (s) => member(s.memberId)?.phone },
-          {
-            label: "PT plan",
-            render: (s) =>
-              db.personalTrainingPlans.find((p) => p.id === s.planId)?.name,
-          },
-          { label: "Start date", render: (s) => dateLabel(s.startDate) },
-          { label: "End date", render: (s) => dateLabel(s.endDate) },
-          {
-            label: "Days remaining ↑",
-            render: (s) => calculateDaysRemaining(s.endDate),
-          },
-          { label: "Plan cost", render: (s) => money(s.priceAtPurchase) },
-          {
-            label: "Status",
-            render: (s) => (
-              <StatusBadge status={getMembershipStatus(s.endDate)} />
-            ),
-          },
-        ]}
-      />
-      {m && (
-        <Modal title={m.fullName} onClose={() => setDetail("")}>
           <div className="modal-body">
-            <Person name={m.fullName} email={m.email} />
-            <p>{m.phone}</p>
-            <Link className="btn primary" to={"/members/" + m.id}>
-              View training details
-            </Link>
+            {member.isPending ? (
+              <LoadingSkeleton />
+            ) : member.error ? (
+              <ErrorState
+                error={member.error}
+                retry={() => void member.refetch()}
+              />
+            ) : (
+              member.data && (
+                <>
+                  <Person
+                    name={member.data.member.fullName}
+                    email={member.data.member.email}
+                  />
+                  <p>{member.data.member.phone}</p>
+                  <p className="text-muted">
+                    Only this trainer’s non-cancelled assignments are shown.
+                  </p>
+                  <DataTable
+                    rows={member.data.trainingHistory}
+                    columns={[
+                      { label: "PT plan", render: (r) => r.planName },
+                      {
+                        label: "Start date",
+                        render: (r) => dateLabel(r.startDate),
+                      },
+                      {
+                        label: "End date",
+                        render: (r) => dateLabel(r.endDate),
+                      },
+                      {
+                        label: "Status",
+                        render: (r) => <StatusBadge status={r.status} />,
+                      },
+                    ]}
+                  />
+                </>
+              )
+            )}
           </div>
         </Modal>
       )}

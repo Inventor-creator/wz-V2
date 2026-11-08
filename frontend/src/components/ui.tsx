@@ -265,14 +265,22 @@ export function DataTable<T extends { id: string }>({
   rows,
   columns,
   pageSize = 8,
+  pagination,
 }: {
   rows: T[];
   columns: Column<T>[];
   pageSize?: number;
+  pagination?: {
+    page: number;
+    total: number;
+    onChange: (page: number) => void;
+  };
 }) {
   const [page, setPage] = useState(1);
-  const max = Math.max(1, Math.ceil(rows.length / pageSize));
-  const current = Math.min(page, max);
+  const total = pagination?.total ?? rows.length;
+  const max = Math.max(1, Math.ceil(total / pageSize));
+  const current = Math.min(pagination?.page ?? page, max);
+  const changePage = pagination?.onChange ?? setPage;
   return (
     <div className="panel">
       <div className="table-wrap mobile-cards">
@@ -285,37 +293,38 @@ export function DataTable<T extends { id: string }>({
             </tr>
           </thead>
           <tbody>
-            {rows
-              .slice((current - 1) * pageSize, current * pageSize)
-              .map((r, i) => (
-                <tr key={r.id}>
-                  {columns.map((c) => (
-                    <td key={c.label} data-label={c.label}>
-                      {c.render(r, (current - 1) * pageSize + i)}
-                    </td>
-                  ))}
-                </tr>
-              ))}
+            {(pagination
+              ? rows
+              : rows.slice((current - 1) * pageSize, current * pageSize)
+            ).map((r, i) => (
+              <tr key={r.id}>
+                {columns.map((c) => (
+                  <td key={c.label} data-label={c.label}>
+                    {c.render(r, (current - 1) * pageSize + i)}
+                  </td>
+                ))}
+              </tr>
+            ))}
           </tbody>
         </table>
         {!rows.length && <EmptyState />}
       </div>
       <div className="pagination">
         <span>
-          {rows.length} records · Page {current} of {max}
+          {total} records · Page {current} of {max}
         </span>
         <div className="actions">
           <button
             aria-label="Previous page"
             disabled={current === 1}
-            onClick={() => setPage(current - 1)}
+            onClick={() => changePage(current - 1)}
           >
             ‹
           </button>
           <button
             aria-label="Next page"
             disabled={current === max}
-            onClick={() => setPage(current + 1)}
+            onClick={() => changePage(current + 1)}
           >
             ›
           </button>

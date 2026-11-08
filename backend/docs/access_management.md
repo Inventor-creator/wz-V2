@@ -46,6 +46,8 @@ No migration was automatically applied to the live database as part of route imp
 
 For owner/receptionist, omit trainerId or send null/empty string. Trainer roles require an active trainer profile. Email is trimmed/lowercased and validated. `displayName` is optional; pending records use email as a nonempty placeholder until first verified login supplies a name. Google subjects are never accepted by these endpoints.
 
+After migration 004, trainer access may instead include `newTrainer: {"name":"Trainer name","phone":"9876543210"}` with no trainerId. This creates and links the profile in the same transaction as the access grant; phone is optional. PATCH also supports creating a new linked trainer profile. See [trainer_dashboard.md](trainer_dashboard.md). The frontend defaults to creating a new profile when granting new trainer access, so pre-creating a trainer is no longer necessary.
+
 ### Patch
 
 ```json

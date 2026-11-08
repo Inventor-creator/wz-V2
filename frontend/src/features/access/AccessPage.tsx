@@ -2,7 +2,11 @@ import { useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
-import type { Trainer, RoleAssignment } from "../../types/domain";
+import type {
+  Trainer,
+  RoleAssignment,
+  AccessGrantInput,
+} from "../../types/domain";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { roles, roleLabel } from "../../lib/permissions";
 import { dateLabel } from "../../lib/dates";
@@ -19,10 +23,41 @@ import {
   ErrorState,
 } from "../../components/ui";
 const schema = z
-  .object({ email: z.email(), role: z.enum(roles), trainerId: z.string() })
-  .refine((v) => v.role !== "GYM_TRAINER" || !!v.trainerId, {
-    path: ["trainerId"],
-    message: "Select a trainer profile",
+  .object({
+    email: z.email(),
+    role: z.enum(roles),
+    trainerId: z.string(),
+    trainerMode: z.enum(["existing", "new"]),
+    trainerName: z.string(),
+    trainerPhone: z.string(),
+  })
+  .superRefine((v, c) => {
+    if (v.role !== "GYM_TRAINER") return;
+    if (v.trainerMode === "existing" && !v.trainerId)
+      c.addIssue({
+        code: "custom",
+        path: ["trainerId"],
+        message: "Select a trainer profile",
+      });
+    if (
+      v.trainerMode === "new" &&
+      (v.trainerName.trim().length < 2 || v.trainerName.trim().length > 160)
+    )
+      c.addIssue({
+        code: "custom",
+        path: ["trainerName"],
+        message: "Enter the trainer’s full name",
+      });
+    if (
+      v.trainerMode === "new" &&
+      v.trainerPhone.trim() &&
+      !/^\+?[1-9]\d{7,14}$/.test(v.trainerPhone.replace(/[ -]/g, ""))
+    )
+      c.addIssue({
+        code: "custom",
+        path: ["trainerPhone"],
+        message: "Enter a valid phone number",
+      });
   });
 type Values = z.infer<typeof schema>;
 function useAccessMutation<T>(
@@ -33,7 +68,14 @@ function useAccessMutation<T>(
   return useMutation({
     mutationFn: fn,
     onSuccess: async () => {
-      await client.invalidateQueries({ queryKey: ["access-assignments"] });
+      await Promise.all(
+        [
+          "access-assignments",
+          "access-trainer-options",
+          "trainer-options",
+          "trainer-dashboard",
+        ].map((key) => client.invalidateQueries({ queryKey: [key] })),
+      );
       done?.();
     },
   });
@@ -59,16 +101,28 @@ function AccessForm({
       email: assignment?.email || "",
       role: assignment?.role || "GYM_RECEPTIONIST",
       trainerId: assignment?.trainerId || "",
+      trainerMode: assignment?.trainerId ? "existing" : "new",
+      trainerName: assignment?.name || "",
+      trainerPhone: "",
     },
   });
   const selectedRole = useWatch({ control, name: "role" });
+  const trainerMode = useWatch({ control, name: "trainerMode" });
   const save = useAccessMutation((values: Values) => {
-    const v = {
-      ...values,
-      trainerId: values.role === "GYM_TRAINER" ? values.trainerId : "",
-    };
+    const v: AccessGrantInput = { email: values.email, role: values.role };
+    if (values.role === "GYM_TRAINER" && values.trainerMode === "new")
+      v.newTrainer = {
+        name: values.trainerName.trim(),
+        phone: values.trainerPhone || undefined,
+      };
+    else v.trainerId = values.role === "GYM_TRAINER" ? values.trainerId : "";
     return assignment
-      ? api.accessAssignments.update(assignment.id, v)
+      ? api.accessAssignments.update(assignment.id, {
+          ...v,
+          ...(assignment.status === "REVOKED"
+            ? { status: "ACTIVE" as const }
+            : {}),
+        })
       : api.accessAssignments.create(v);
   }, onClose);
   return (
@@ -97,19 +151,55 @@ function AccessForm({
           </select>
         </Field>
         {selectedRole === "GYM_TRAINER" && (
-          <Field
-            label="Linked trainer profile"
-            error={errors.trainerId?.message}
-          >
-            <select {...register("trainerId")}>
-              <option value="">Select trainer</option>
-              {trainers.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
-            </select>
-          </Field>
+          <>
+            <Field label="Trainer profile">
+              <select {...register("trainerMode")}>
+                <option value="new">Create and link a new trainer</option>
+                <option value="existing">Link an existing trainer</option>
+              </select>
+            </Field>
+            {trainerMode === "new" ? (
+              <>
+                <Field
+                  label="Trainer full name"
+                  error={errors.trainerName?.message}
+                >
+                  <input {...register("trainerName")} />
+                </Field>
+                <Field
+                  label="Trainer phone (optional)"
+                  error={errors.trainerPhone?.message}
+                >
+                  <input type="tel" {...register("trainerPhone")} />
+                </Field>
+                <p className="text-muted">
+                  The profile and access grant are created together. The profile
+                  uses the authorized email above.
+                </p>
+              </>
+            ) : (
+              <Field
+                label="Linked trainer profile"
+                error={errors.trainerId?.message}
+              >
+                <select {...register("trainerId")}>
+                  <option value="">Select trainer</option>
+                  {trainers.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                      {t.email ? ` · ${t.email}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            )}
+          </>
+        )}
+        {selectedRole === "GYM_TRAINER" && assignment?.trainerId && (
+          <p className="text-muted">
+            Changing the linked profile does not transfer existing members or
+            subscriptions.
+          </p>
         )}
         <p className="text-muted">
           Authorization takes effect on the backend. The user may not have

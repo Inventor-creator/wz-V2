@@ -65,6 +65,12 @@ async def trainer_options(actor: dict = Depends(authorized_actor)):
 
 @router.post("", response_model=AccessAssignment, status_code=201, dependencies=[Depends(require_write_origin)])
 async def create_assignment(body: AccessCreate, actor: dict = Depends(authorized_actor)):
+    if body.newTrainer:
+        return await rpc("workout_zone_grant_new_trainer", {
+            "p_actor_id": actor["id"], "p_action": "create", "p_email": str(body.email),
+            "p_name": body.newTrainer.name, "p_phone": body.newTrainer.phone,
+            "p_display_name": body.displayName or body.newTrainer.name,
+        })
     return await rpc("workout_zone_mutate_access", {
         "p_actor_id": actor["id"], "p_action": "create", "p_email": str(body.email),
         "p_role": DB_ROLES[body.role], "p_trainer_id": str(body.trainerId) if body.trainerId else None,
@@ -74,6 +80,12 @@ async def create_assignment(body: AccessCreate, actor: dict = Depends(authorized
 
 @router.patch("/{assignment_id}", response_model=AccessAssignment, dependencies=[Depends(require_write_origin)])
 async def update_assignment(assignment_id: UUID, body: AccessUpdate, actor: dict = Depends(authorized_actor)):
+    if body.newTrainer:
+        return await rpc("workout_zone_grant_new_trainer", {
+            "p_actor_id": actor["id"], "p_action": "update", "p_assignment_id": str(assignment_id),
+            "p_email": str(body.email) if body.email else None,
+            "p_name": body.newTrainer.name, "p_phone": body.newTrainer.phone,
+        })
     return await rpc("workout_zone_mutate_access", {
         "p_actor_id": actor["id"], "p_action": "update", "p_assignment_id": str(assignment_id),
         "p_email": str(body.email) if body.email else None,
