@@ -66,11 +66,23 @@ export function StatusBadge({ status }: { status: string }) {
     <span
       className={
         "badge " +
-        (s.includes("expired") || s === "revoked"
+        (s.includes("expired") || s === "revoked" || s === "failed"
           ? "red"
-          : s.includes("partial") || s.includes("unpaid") || s.includes("soon")
+          : s.includes("partial") ||
+              s.includes("unpaid") ||
+              s.includes("soon") ||
+              s === "pending"
             ? "amber"
-            : s.includes("archived") || s.includes("inactive")
+            : s.includes("archived") ||
+                s.includes("inactive") ||
+                [
+                  "no plan",
+                  "upcoming",
+                  "cancelled",
+                  "not_issued",
+                  "draft",
+                  "void",
+                ].includes(s)
               ? "neutral"
               : "")
       }
@@ -127,10 +139,12 @@ export function Modal({
   title,
   children,
   onClose,
+  className = "",
 }: {
   title: string;
   children: ReactNode;
   onClose: () => void;
+  className?: string;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
@@ -143,7 +157,7 @@ export function Modal({
   return (
     <dialog
       ref={ref}
-      className="modal native-modal"
+      className={"modal native-modal" + (className ? " " + className : "")}
       aria-label={title}
       onCancel={onClose}
       onClick={(e) => {

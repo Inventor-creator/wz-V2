@@ -34,3 +34,10 @@ __pycache__/
 .DS_Store
 graphify-out
 tests
+# Keep regression and financial verification sources; never ignore test coverage.
+!backend/tests/
+!backend/tests/*.py
+!backend/tests/*.mjs
+!frontend/src/tests/
+!frontend/src/tests/*.ts
+!frontend/src/tests/*.tsx

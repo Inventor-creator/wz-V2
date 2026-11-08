@@ -21,9 +21,10 @@ catalogue. The frontend now reflects this contract, including the development
 adapter and member form. Trainer details link to the shared catalogue.
 
 The new **Trainer Plans** navigation entry at `/personal-training-plans` works
-without `/gym/workspace`. Existing trainer profile/member/billing pages retain
-their separate backend integration requirements; this is not a trainer-profile
-CRUD, purchase, billing, renewal, or payout-write implementation.
+without `/gym/workspace`. Trainer profiles now use separate APIs from migration
+007 (see [trainers.md](trainers.md)). Member onboarding and history now use 008
+(see [members.md](members.md)); billing/renewal/payout execution remain separate
+workflows, not side effects of catalogue CRUD.
 
 ## API
 

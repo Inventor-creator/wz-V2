@@ -1,282 +1,571 @@
 import { useState } from "react";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import type { Invoice, Payment } from "../../types/domain";
-import { api } from "../../lib/api";
-import { paymentSchema } from "../../lib/validation";
-import { dateLabel, money, today } from "../../lib/dates";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
+import { financialApi } from "../../lib/financialApi";
+import type { FinancialFilters } from "../../types/financial";
+import { dateLabel } from "../../lib/dates";
+import { useAuth } from "../auth/AuthProvider";
 import {
-  useWorkspace,
-  useAction,
   PageHeader,
   StatCard,
   DataTable,
-  Person,
   StatusBadge,
   Modal,
-  Field,
-  FormLayout,
   LoadingSkeleton,
   ErrorState,
 } from "../../components/ui";
-export function PaymentDialog({
-  invoice,
+import {
+  FinancialNotice,
+  MoneyCommandDialog,
+  SortSelect,
+} from "./financialShared";
+import { inr, paise } from "../../lib/financial";
+import { ReasonDialog, SubscriptionDialog } from "./SubscriptionDialog";
+
+export function InvoiceDialog({
+  id,
   onClose,
 }: {
-  invoice: Invoice;
+  id: string;
   onClose: () => void;
 }) {
-  const [receipt, setReceipt] = useState<Payment | null>(null);
-  type Values = Omit<Payment, "id" | "invoiceId" | "memberId">;
-  const {
-    register,
-    handleSubmit,
-    formState: { errors },
-  } = useForm<Values>({
-    resolver: zodResolver(paymentSchema(invoice.outstandingAmount)),
-    defaultValues: {
-      amount: invoice.outstandingAmount,
-      paymentDate: today(),
-      method: "UPI",
-      transactionReference: "",
-      notes: "",
-    },
+  const { user } = useAuth();
+  const owner = user?.role === "SUPER_ADMIN" || user?.role === "GYM_OWNER";
+  const query = useQuery({
+    queryKey: ["financial-invoice", id],
+    queryFn: () => financialApi.invoice(id),
+    refetchOnWindowFocus: true,
+    refetchInterval: 60_000,
   });
-  const save = useAction((v: Values) =>
-    api.payments.create({ ...v, invoiceId: invoice.id }),
-  );
+  const [action, setAction] = useState<{
+    title: string;
+    url: string;
+    maximum: string;
+    reason?: boolean;
+    reversal?: boolean;
+    noDate?: boolean;
+  } | null>(null);
+  const [reasonAction, setReasonAction] = useState<{
+    title: string;
+    description: string;
+    url: string;
+    extra?: Record<string, unknown>;
+  } | null>(null);
+  const bill = query.data?.invoice;
   return (
-    <Modal
-      title={receipt ? "Payment receipt" : "Log payment"}
-      onClose={onClose}
-    >
-      {receipt ? (
+    <>
+      <Modal title="Invoice and payment history" onClose={onClose}>
         <div className="modal-body">
-          <div className="receipt">
-            <small>WORKOUT ZONE · DEVELOPMENT RECEIPT</small>
-            <h3>{receipt.id}</h3>
-            <div className="amount">{money(receipt.amount)}</div>
-            <p>
-              {invoice.id} · {receipt.method} · {dateLabel(receipt.paymentDate)}
-            </p>
-            <p>Reference: {receipt.transactionReference || "Not provided"}</p>
-            <p>{receipt.notes}</p>
-          </div>
+          {query.isPending ? (
+            <LoadingSkeleton />
+          ) : query.error ? (
+            <ErrorState
+              error={query.error}
+              retry={() => void query.refetch()}
+            />
+          ) : (
+            bill && (
+              <>
+                <h3>
+                  {bill.memberName} · {bill.memberNumber}
+                </h3>
+                <p>
+                  {bill.invoiceNumber} · Due {dateLabel(bill.dueDate)} ·{" "}
+                  {bill.archived
+                    ? "Archived member — financial history retained"
+                    : "Member account"}
+                </p>
+                <p>
+                  Total {inr(bill.total)} · Net paid {inr(bill.paid)} ·
+                  Outstanding <strong>{inr(bill.balance)}</strong>
+                </p>
+                <div className="actions">
+                  {bill.status === "issued" &&
+                    !bill.reconciliationRequired &&
+                    paise(bill.balance) > 0n && (
+                      <>
+                        <button
+                          className="btn primary"
+                          onClick={() =>
+                            setAction({
+                              title: "Record payment",
+                              url: `/fees-due/${id}/payments`,
+                              maximum: bill.balance,
+                            })
+                          }
+                        >
+                          Record payment
+                        </button>
+                        {owner && (
+                          <button
+                            className="btn"
+                            onClick={() =>
+                              setAction({
+                                title: "Adjust unpaid fees",
+                                url: `/fees-due/${id}/adjustments`,
+                                maximum: bill.balance,
+                                reason: true,
+                                noDate: true,
+                              })
+                            }
+                          >
+                            Adjust unpaid fees
+                          </button>
+                        )}
+                      </>
+                    )}
+                  {bill.archived && (
+                    <button
+                      className="btn"
+                      onClick={() =>
+                        setReasonAction({
+                          title: "Restore member",
+                          description:
+                            "Restore this archived profile without changing any subscriptions or financial records.",
+                          url: `/financial-members/${bill.memberId}/restore`,
+                        })
+                      }
+                    >
+                      Restore member
+                    </button>
+                  )}
+                </div>
+                {bill.reconciliationRequired && (
+                  <p className="notice" role="alert">
+                    Legacy receipts are not fully allocated. Collection and fee
+                    adjustments are blocked until the original receipt
+                    allocations are reconciled.
+                  </p>
+                )}
+                <h3>Obligation details</h3>
+                <DataTable
+                  rows={bill.lines}
+                  columns={[
+                    { label: "Plan / charge", render: (l) => l.description },
+                    {
+                      label: "Service dates",
+                      render: (l) =>
+                        `${dateLabel(l.startDate || "")} – ${dateLabel(l.endDate || "")}`,
+                    },
+                    { label: "Net charge", render: (l) => inr(l.amount) },
+                    {
+                      label: "Original charge",
+                      render: (l) => inr(l.originalAmount || l.amount),
+                    },
+                    {
+                      label: "Membership status",
+                      render: (l) => l.membershipStatus || "—",
+                    },
+                    {
+                      label: "Actions",
+                      render: (l) =>
+                        l.subscriptionId &&
+                        l.membershipStatus !== "Cancelled" && (
+                          <button
+                            className="btn small"
+                            onClick={() =>
+                              setReasonAction({
+                                title: "Cancel subscription",
+                                description:
+                                  "Cancellation stops the membership but preserves all charges and payments. Any unpaid waiver or refund must be recorded separately.",
+                                url: `/financial-subscriptions/${l.subscriptionId}/cancel`,
+                                extra: { kind: l.kind },
+                              })
+                            }
+                          >
+                            Cancel subscription
+                          </button>
+                        ),
+                    },
+                  ]}
+                />
+                {!!bill.adjustments?.length && (
+                  <>
+                    <h3>Fee adjustment history</h3>
+                    {bill.adjustments.map((a) => (
+                      <p key={a.id}>
+                        {inr(a.amount)} waived · {a.reason} ·{" "}
+                        {a.createdBy || "Legacy / unknown"} ·{" "}
+                        {dateLabel(a.createdAt)} · {a.operationId}
+                      </p>
+                    ))}
+                  </>
+                )}
+                <h3>Payment history</h3>
+                {query.data?.payments.map((p) => (
+                  <section className="financial-history" key={p.id}>
+                    <strong>
+                      {inr(p.amount)} · {p.method} · {dateLabel(p.date || "")}
+                    </strong>
+                    <p>
+                      Transaction {p.id} · {p.status} · Recorded by{" "}
+                      {p.createdBy || "Legacy / unknown"}
+                      {p.createdAt &&
+                        ` · Recorded ${new Date(p.createdAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}`}
+                    </p>
+                    <p>
+                      Reference: {p.reference || "—"} · Notes: {p.notes || "—"}
+                    </p>
+                    {p.refunds.map((r) => (
+                      <p key={r.id}>
+                        {r.kind}: {inr(r.amount)} · {dateLabel(r.date)} ·{" "}
+                        {r.reason} · {r.createdBy || "Legacy / unknown"} ·{" "}
+                        {r.id}
+                        {r.createdAt &&
+                          ` · Recorded ${new Date(r.createdAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}`}
+                      </p>
+                    ))}
+                    {p.status === "completed" && paise(p.refundable) > 0n && (
+                      <div className="actions">
+                        <button
+                          className="btn small"
+                          onClick={() =>
+                            setAction({
+                              title: "Refund payment",
+                              url: `/financial-payments/${p.id}/refunds`,
+                              maximum: p.refundable,
+                              reason: true,
+                            })
+                          }
+                        >
+                          Refund
+                        </button>
+                        <button
+                          className="btn small danger"
+                          onClick={() =>
+                            setAction({
+                              title: "Reverse payment",
+                              url: `/financial-payments/${p.id}/refunds`,
+                              maximum: p.refundable,
+                              reason: true,
+                              reversal: true,
+                            })
+                          }
+                        >
+                          Reverse remaining receipt
+                        </button>
+                      </div>
+                    )}
+                  </section>
+                ))}
+                {!query.data?.payments.length && <p>No payments recorded.</p>}
+              </>
+            )
+          )}
+        </div>
+        <div className="modal-actions">
           <button className="btn" onClick={onClose}>
-            Done
+            Close
           </button>
         </div>
-      ) : (
-        <>
-          <div className="notice">
-            {invoice.id} · Outstanding balance:{" "}
-            <strong>{money(invoice.outstandingAmount)}</strong>
-          </div>
-          <FormLayout
-            onSubmit={handleSubmit((v) =>
-              save.mutate(v, { onSuccess: (r) => setReceipt(r as Payment) }),
-            )}
-            pending={save.isPending}
-            error={save.error}
-            onClose={onClose}
-          >
-            <Field label="Payment amount (INR)" error={errors.amount?.message}>
-              <input
-                type="number"
-                min="0.01"
-                step="0.01"
-                max={invoice.outstandingAmount}
-                {...register("amount", { valueAsNumber: true })}
-              />
-            </Field>
-            <Field label="Payment date" error={errors.paymentDate?.message}>
-              <input type="date" max={today()} {...register("paymentDate")} />
-            </Field>
-            <Field label="Payment method">
-              <select {...register("method")}>
-                {["Cash", "UPI", "Card", "Bank Transfer"].map((m) => (
-                  <option key={m}>{m}</option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Transaction reference">
-              <input {...register("transactionReference")} />
-            </Field>
-            <Field label="Notes" wide>
-              <textarea {...register("notes")} />
-            </Field>
-          </FormLayout>
-        </>
+      </Modal>
+      {action && (
+        <MoneyCommandDialog {...action} onClose={() => setAction(null)} />
       )}
-    </Modal>
+      {reasonAction && (
+        <ReasonDialog {...reasonAction} onClose={() => setReasonAction(null)} />
+      )}
+    </>
   );
 }
+
 export function FeesPage() {
-  const q = useWorkspace();
-  const [search, setSearch] = useState("");
-  const [type, setType] = useState("");
-  const [status, setStatus] = useState("");
-  const [due, setDue] = useState("");
-  const [invoice, setInvoice] = useState<Invoice | null>(null);
-  const [history, setHistory] = useState(false);
-  if (q.isPending) return <LoadingSkeleton />;
-  if (!q.data) return <ErrorState error={q.error} />;
-  const db = q.data;
-  const member = (id: string) => db.members.find((m) => m.id === id);
-  const rows = db.invoices.filter(
-    (i) =>
-      i.outstandingAmount > 0 &&
-      member(i.memberId)
-        ?.fullName.toLowerCase()
-        .includes(search.toLowerCase()) &&
-      (!type || i.lineItems.some((l) => l.feeType === type)) &&
-      (!status || i.status === status) &&
-      (!due || i.dueDate <= due),
+  const { user } = useAuth();
+  const owner = user?.role === "SUPER_ADMIN" || user?.role === "GYM_OWNER";
+  const [params] = useSearchParams();
+  const [filters, setFilters] = useState<FinancialFilters>({
+    search: "",
+    status: "",
+    memberId: params.get("memberId") || "",
+    page: 1,
+    pageSize: 20,
+    sort: "dueDate",
+    direction: "asc",
+  });
+  const [invoice, setInvoice] = useState<string | null>(null);
+  const [purchase, setPurchase] = useState(false);
+  const [archived, setArchived] = useState(false);
+  const [archiveSearch, setArchiveSearch] = useState("");
+  const [restoreId, setRestoreId] = useState<string | null>(null);
+  const [unbilled, setUnbilled] = useState(false);
+  const [legacy, setLegacy] = useState<{ id: string; kind: string } | null>(
+    null,
   );
+  const update = (key: string, value: string) =>
+    setFilters((f) => ({ ...f, [key]: value, page: 1 }));
+  const query = useQuery({
+    queryKey: ["fees-due", filters],
+    queryFn: () => financialApi.fees(filters),
+    placeholderData: keepPreviousData,
+    refetchOnWindowFocus: true,
+    refetchInterval: 60_000,
+  });
+  const summary = query.data?.summary;
   return (
     <>
       <PageHeader
-        title="Fees due"
-        description="Keep collections clear, accurate and up to date."
+        title="Fees Due"
+        description="Actual invoice balances, receipts and retained member debts."
       >
-        <button className="btn" onClick={() => setHistory(true)}>
-          Payment history & receipts
+        {owner && (
+          <button className="btn" onClick={() => setUnbilled(true)}>
+            Review unbilled purchases
+          </button>
+        )}
+        <button className="btn" onClick={() => setArchived(true)}>
+          Archived members
+        </button>
+        <button className="btn primary" onClick={() => setPurchase(true)}>
+          New membership / renewal
         </button>
       </PageHeader>
-      <div className="metrics">
-        <StatCard
-          main
-          label="Outstanding Fees"
-          value={money(
-            db.invoices.reduce((s, i) => s + i.outstandingAmount, 0),
-          )}
-        />
-        <StatCard
-          label="Unpaid Invoices"
-          value={db.invoices.filter((i) => i.status === "UNPAID").length}
-        />
-        <StatCard
-          label="Partially Paid"
-          value={db.invoices.filter((i) => i.status === "PARTIAL").length}
-        />
-      </div>
-      <div className="toolbar panel">
+      <FinancialNotice />
+      {summary && (
+        <div className="metrics">
+          <StatCard
+            label="Outstanding fees"
+            value={inr(summary.outstanding)}
+            note={`${summary.members} members with balances`}
+          />
+          <StatCard
+            label="Overdue fees"
+            value={inr(summary.overdue)}
+            note="Due before today, Asia/Kolkata"
+          />
+          <StatCard
+            label="Collected this month"
+            value={inr(summary.collectedThisMonth)}
+            note="Receipts minus refunds this calendar month"
+          />
+          <StatCard
+            label="Payment obligations"
+            value={`${summary.partial} partial · ${summary.paid} paid`}
+            note={`${summary.upcoming} upcoming obligations`}
+          />
+        </div>
+      )}
+      <div className="toolbar">
         <input
-          placeholder="Search member…"
-          aria-label="Search invoice member"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          aria-label="Search fees"
+          placeholder="Search member, ID or plan"
+          value={filters.search}
+          onChange={(e) => update("search", e.target.value)}
         />
-        <select
-          aria-label="Fee type"
-          value={type}
-          onChange={(e) => setType(e.target.value)}
-        >
-          <option value="">All fee types</option>
-          <option value="GYM">Gym membership</option>
-          <option value="PT">Personal training</option>
-        </select>
+        <input
+          aria-label="Member ID filter"
+          placeholder="Filter by member UUID"
+          value={filters.memberId}
+          onChange={(e) => update("memberId", e.target.value)}
+        />
         <select
           aria-label="Payment status"
-          value={status}
-          onChange={(e) => setStatus(e.target.value)}
+          value={filters.status}
+          onChange={(e) => update("status", e.target.value)}
         >
-          <option value="">All payment statuses</option>
-          <option value="UNPAID">Unpaid</option>
-          <option value="PARTIAL">Partially paid</option>
+          <option value="">All payments</option>
+          {["PAID", "UNPAID", "PARTIAL", "OVERDUE", "UPCOMING"].map((s) => (
+            <option key={s}>{s}</option>
+          ))}
         </select>
-        <label className="field">
-          Due on or before
-          <input
-            type="date"
-            value={due}
-            onChange={(e) => setDue(e.target.value)}
-          />
-        </label>
+        <SortSelect
+          value={filters}
+          update={update}
+          options={[
+            "dueDate",
+            "memberName",
+            "total",
+            "paid",
+            "balance",
+            "lastPaymentDate",
+          ]}
+        />
       </div>
-      <DataTable
-        rows={rows}
-        columns={[
-          {
-            label: "Member",
-            render: (i) => (
-              <Person
-                name={member(i.memberId)?.fullName || "Archived member"}
-                email={member(i.memberId)?.phone}
-              />
-            ),
-          },
-          {
-            label: "Fee type / Plan",
-            render: (i) =>
-              i.lineItems.map((l) => (
-                <div key={l.id}>
-                  {l.feeType}
-                  <small>{l.description}</small>
-                </div>
-              )),
-          },
-          {
-            label: "Invoice date",
-            render: (i) => (
-              <>
-                {dateLabel(i.invoiceDate)}
-                <small>{i.id}</small>
-              </>
-            ),
-          },
-          { label: "Due date", render: (i) => dateLabel(i.dueDate) },
-          { label: "Amount due", render: (i) => money(i.outstandingAmount) },
-          {
-            label: "Payment status",
-            render: (i) => <StatusBadge status={i.status} />,
-          },
-          {
-            label: "Actions",
-            render: (i) => (
-              <button className="btn small" onClick={() => setInvoice(i)}>
-                Log Payment
-              </button>
-            ),
-          },
-        ]}
-      />
-      {invoice && (
-        <PaymentDialog invoice={invoice} onClose={() => setInvoice(null)} />
-      )}
-      {history && (
-        <Modal
-          title="Payment history & receipts"
-          onClose={() => setHistory(false)}
-        >
-          <div className="modal-body">
+      {query.isPending ? (
+        <LoadingSkeleton />
+      ) : query.error ? (
+        <ErrorState error={query.error} retry={() => void query.refetch()} />
+      ) : (
+        query.data && (
+          <>
             <DataTable
-              rows={db.payments}
+              rows={query.data.rows}
               columns={[
                 {
-                  label: "Receipt",
-                  render: (p) => (
+                  label: "Member",
+                  render: (r) => (
                     <>
-                      {p.id}
-                      <small>{p.invoiceId}</small>
+                      <strong>{r.memberName}</strong>
+                      <small>
+                        {r.memberNumber}
+                        {r.reconciliationRequired
+                          ? " · Reconciliation required"
+                          : ""}
+                        {r.archived ? " · Archived" : ""}
+                      </small>
                     </>
                   ),
                 },
-                { label: "Date", render: (p) => dateLabel(p.paymentDate) },
                 {
-                  label: "Method / Reference",
-                  render: (p) => (
+                  label: "Membership plan",
+                  render: (r) => r.lines.map((l) => l.description).join(", "),
+                },
+                {
+                  label: "Membership status",
+                  render: (r) =>
+                    r.lines.map((l) => l.membershipStatus || "—").join(", "),
+                },
+                { label: "Total payable", render: (r) => inr(r.total) },
+                { label: "Net paid", render: (r) => inr(r.paid) },
+                { label: "Remaining", render: (r) => inr(r.balance) },
+                { label: "Due date", render: (r) => dateLabel(r.dueDate) },
+                {
+                  label: "Payment status",
+                  render: (r) => (
                     <>
-                      {p.method}
-                      <small>{p.transactionReference}</small>
+                      <StatusBadge status={r.paymentStatus || r.status} />
+                      {r.overdue && <StatusBadge status="Overdue" />}
+                      {r.upcoming && <StatusBadge status="Upcoming" />}
                     </>
                   ),
                 },
-                { label: "Collected", render: (p) => money(p.amount) },
+                {
+                  label: "Last payment",
+                  render: (r) => dateLabel(r.lastPaymentDate || ""),
+                },
+                {
+                  label: "Actions",
+                  render: (r) => (
+                    <button
+                      className="btn small"
+                      onClick={() => setInvoice(r.id)}
+                    >
+                      View / collect
+                    </button>
+                  ),
+                },
+              ]}
+              pageSize={query.data.pageSize}
+              pagination={{
+                page: query.data.page,
+                total: query.data.total,
+                onChange: (page) => setFilters((f) => ({ ...f, page })),
+              }}
+            />
+          </>
+        )
+      )}
+      <p className="notice">
+        Payment status is independent of membership expiry. Archived and expired
+        members retain their debts. Existing purchases predating migration 009
+        require reviewed billing reconciliation; they are not silently charged.
+      </p>
+      {invoice && (
+        <InvoiceDialog id={invoice} onClose={() => setInvoice(null)} />
+      )}
+      {purchase && <SubscriptionDialog onClose={() => setPurchase(false)} />}
+      {archived && (
+        <Modal title="Archived members" onClose={() => setArchived(false)}>
+          <div className="modal-body">
+            <p>
+              Restoration retains original subscriptions, invoice balances and
+              financial history.
+            </p>
+            <input
+              aria-label="Search archived members"
+              placeholder="Search archived members"
+              value={archiveSearch}
+              onChange={(e) => setArchiveSearch(e.target.value)}
+            />
+            <DataTable
+              rows={(query.data?.archivedMembers || []).filter((m) =>
+                `${m.name} ${m.memberNumber}`
+                  .toLowerCase()
+                  .includes(archiveSearch.toLowerCase()),
+              )}
+              columns={[
+                {
+                  label: "Member",
+                  render: (m) => `${m.name} · ${m.memberNumber}`,
+                },
+                {
+                  label: "Actions",
+                  render: (m) => (
+                    <button
+                      className="btn small"
+                      onClick={() => {
+                        setArchived(false);
+                        setRestoreId(m.id);
+                      }}
+                    >
+                      Restore member
+                    </button>
+                  ),
+                },
               ]}
             />
           </div>
         </Modal>
+      )}
+      {restoreId && (
+        <ReasonDialog
+          title="Restore member"
+          description="Reactivate this profile without changing historical debts, subscriptions or payments."
+          url={`/financial-members/${restoreId}/restore`}
+          onClose={() => setRestoreId(null)}
+        />
+      )}
+      {unbilled && (
+        <Modal
+          title="Review unbilled purchases"
+          onClose={() => setUnbilled(false)}
+        >
+          <div className="modal-body">
+            <p className="notice">
+              These historical purchases have no linked invoice. Verify external
+              records, discounts and cancellations before billing. Approval
+              issues the original purchase price, not today's catalogue price.
+              Nothing is charged automatically.
+            </p>
+            <DataTable
+              rows={query.data?.unbilled || []}
+              columns={[
+                {
+                  label: "Member / plan",
+                  render: (r) => `${r.memberName} · ${r.planName}`,
+                },
+                {
+                  label: "Status / dates",
+                  render: (r) =>
+                    `${r.status} · ${dateLabel(r.startDate)} – ${dateLabel(r.endDate)}`,
+                },
+                { label: "Purchase price", render: (r) => inr(r.amount) },
+                {
+                  label: "Actions",
+                  render: (r) => (
+                    <button
+                      className="btn small"
+                      onClick={() => {
+                        setUnbilled(false);
+                        setLegacy({ id: r.id, kind: r.kind });
+                      }}
+                    >
+                      Review and issue charge
+                    </button>
+                  ),
+                },
+              ]}
+            />
+          </div>
+        </Modal>
+      )}
+      {legacy && (
+        <ReasonDialog
+          title="Issue historical charge"
+          description="Confirm that this original purchase remains billable and was not settled outside this ledger. This creates an invoice and debt, never a receipt. Duplicate linked charges are blocked."
+          url={`/financial-subscriptions/${legacy.id}/bill`}
+          extra={{ kind: legacy.kind }}
+          onClose={() => setLegacy(null)}
+        />
       )}
     </>
   );

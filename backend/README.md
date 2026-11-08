@@ -1,5 +1,16 @@
 # MyApp Backend
 
+Fees Due and Finances application code is implemented using dedicated checked
+financial RPCs and Decimal reports. **009_fees_and_finances.sql — CREATED — NOT
+APPLIED — AWAITING MANUAL REVIEW**, after 001–008. No migration was executed for
+this financial task, including disposable databases. See
+[`docs/fees_finances.md`](docs/fees_finances.md) for manual deployment, API/security,
+legacy reconciliation and risks, [`docs/fees_due.md`](docs/fees_due.md),
+[`docs/finances.md`](docs/finances.md), and
+[`docs/financial_testing.md`](docs/financial_testing.md) for safe checks and blocked
+database/E2E verification. Never run migration-executing test runners to bypass
+manual review. Existing verification notes below describe earlier tasks only.
+
 Access-management routes are implemented and registered. See
 [`docs/access_management.md`](docs/access_management.md) for required migrations,
 endpoint contracts, permissions, audit/history semantics and deployment checks.
@@ -17,6 +28,16 @@ Shared trainer/PT plan CRUD is implemented at `/personal-training-plans`.
 Apply migration `006` after `001`–`005`; see
 [`docs/trainer_plans.md`](docs/trainer_plans.md). Trainer selection belongs to the
 member assignment, not the plan catalogue. Deletion preserves PT and payout history.
+
+Trainer directory/profile management now uses dedicated `/trainers` routes.
+Apply migration `007` after `001`–`006`; see [`docs/trainers.md`](docs/trainers.md).
+Profiles and login grants remain independent; owner commission changes are
+effective-dated rather than undated overwrites.
+
+Member create/edit/delete and history routes are implemented at `/members`.
+Apply migration `008` after `001`–`007`; see [`docs/members.md`](docs/members.md).
+Onboarding atomically snapshots subscriptions; contact edits preserve purchase
+terms, and deletion retains referenced member/financial records.
 
 A FastAPI + Supabase Python API scaffold with Google OAuth login.
 
@@ -132,7 +153,7 @@ Use `Depends(require_roles("GYM_OWNER", ...))` from `Routes.authRoutes` on futur
 business routes. It resolves live identity/grants and gives the permanent admin
 all permissions. Use `reject_bootstrap_access_change(target_user)` before any
   future user/access mutation. Access-management routes now also use live
-  authorization; gym domain endpoints remain unimplemented. Database triggers
+  authorization; gym domain endpoints now use dedicated checked RPCs. Database triggers
 also reject direct bootstrap deactivation, deletion, renaming and grant changes.
 
 Set a strong `SECRET_KEY`; empty secrets are rejected. Signed application cookies

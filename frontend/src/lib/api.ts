@@ -3,12 +3,25 @@ import type {
   Database,
   User,
   MemberInput,
+  Member,
+  MemberProfileInput,
+  MemberDirectoryData,
+  MemberDirectoryEntry,
+  MemberDetailsData,
+  MemberOptions,
+  MemberSubscription,
+  MemberDeletion,
   Payment,
   BillingCharge,
   RoleAssignment,
   GymMembershipPlan,
   MembershipPlanDeletion,
   Trainer,
+  TrainerInput,
+  TrainerDirectoryEntry,
+  TrainerDetailsData,
+  CommissionRule,
+  CommissionSchedule,
   PersonalTrainingPlan,
   AccessGrantInput,
   TrainerDashboardData,
@@ -26,15 +39,49 @@ import {
   getMembershipStatus,
 } from "./dates";
 import { canAccess, roles } from "./permissions";
-import { memberSchema, paymentSchema, planSchema } from "./validation";
+import {
+  memberSchema,
+  memberProfileSchema,
+  paymentSchema,
+  planSchema,
+  trainerProfileSchema,
+} from "./validation";
 export const MOCK_MODE =
   import.meta.env.DEV && import.meta.env.VITE_MOCK_API === "true";
 let db = seed();
 const deletedMembershipPlans = new Set<string>();
 const deletedTrainerPlans = new Set<string>();
+const deletedMembers = new Set<string>();
+const memberRequests = new Map<
+  string,
+  { actor: string; fields: string; result: Member }
+>();
 let session: User | null = null;
 const uid = () => crypto.randomUUID();
 const clone = <T>(v: T): T => structuredClone(v);
+function initialCommissionRules() {
+  return new Map(
+    db.payoutConfigurations.map((config) => [
+      config.trainerId,
+      [
+        {
+          id: "demo-rule-" + config.trainerId,
+          kind:
+            config.payoutType === "COMMISSION"
+              ? ("percent" as const)
+              : ("fixed" as const),
+          value:
+            config.payoutType === "COMMISSION"
+              ? config.commissionRate
+              : config.fixedAmount,
+          effectiveFrom: "2020-01-01",
+          effectiveUntil: null,
+        },
+      ] as CommissionRule[],
+    ]),
+  );
+}
+let mockCommissionRules = initialCommissionRules();
 function permit(path: string) {
   if (!session || session.status !== "ACTIVE")
     throw new Error("Session expired. Please sign in again.");
@@ -201,88 +248,225 @@ export const api = {
       : request<Database>("GET", "/gym/workspace"),
   members: {
     list: () =>
-      MOCK_MODE
-        ? Promise.resolve(clone(scoped().members))
-        : request<Database["members"]>("GET", "/members"),
-    get: (id: string) =>
-      MOCK_MODE
-        ? Promise.resolve(clone(scoped().members.find((m) => m.id === id)))
-        : request<Database["members"][number]>("GET", "/members/" + id),
-    create: (input: MemberInput) =>
-      action("/members", "POST", "/members", input, () => {
-        const v = memberSchema.parse(input);
-        const plan = db.membershipPlans.find(
-          (p) => p.id === v.planId && p.isActive,
-        );
-        if (!plan) throw new Error("Gym plan unavailable");
-        const pt = db.personalTrainingPlans.find(
-          (p) =>
-            p.id === v.ptPlanId && p.isActive && !deletedTrainerPlans.has(p.id),
-        );
-        if (
-          v.trainerId &&
-          (!pt || !db.trainers.some((t) => t.id === v.trainerId && t.isActive))
-        )
-          throw new Error("Choose an active trainer and available PT plan");
-        const id = uid();
-        db.members.push({
-          id,
-          fullName: v.fullName,
-          email: v.email,
-          phone: v.phone,
-          joiningDate: v.joiningDate,
-          notes: v.notes,
-          status: "ACTIVE",
-        });
-        db.gymSubscriptions.push({
-          id: uid(),
-          memberId: id,
-          planId: plan.id,
-          startDate: v.startDate,
-          endDate: calculateEndDate(
-            v.startDate,
-            plan.duration,
-            plan.durationUnit,
+      action<MemberDirectoryData>(
+        "/members",
+        "GET",
+        "/members",
+        undefined,
+        () => {
+          const members = db.members
+            .filter((m) => !deletedMembers.has(m.id))
+            .map(mockMemberDirectoryEntry);
+          return {
+            members,
+            summary: {
+              activeMembers: members.filter((m) =>
+                ["Active", "Expiring Soon"].includes(m.membershipStatus),
+              ).length,
+              expiringSoon: members.filter(
+                (m) => m.membershipStatus === "Expiring Soon",
+              ).length,
+              expiredMemberships: members.filter(
+                (m) => m.membershipStatus === "Expired",
+              ).length,
+              outstandingAmount: db.invoices.reduce(
+                (sum, i) => sum + i.outstandingAmount,
+                0,
+              ),
+            },
+          };
+        },
+      ),
+    options: () =>
+      action<MemberOptions>(
+        "/members",
+        "GET",
+        "/members/options",
+        undefined,
+        () => ({
+          membershipPlans: db.membershipPlans.filter(
+            (p) => p.isActive && !deletedMembershipPlans.has(p.id),
           ),
-          priceAtPurchase: plan.price,
-          status: "ACTIVE",
-        });
-        if (pt)
-          db.trainingSubscriptions.push({
+          personalTrainingPlans: db.personalTrainingPlans.filter(
+            (p) => p.isActive && !deletedTrainerPlans.has(p.id),
+          ),
+          trainers: db.trainers.filter((t) => t.isActive),
+        }),
+      ),
+    get: (id: string) =>
+      action<MemberDetailsData>(
+        "/members",
+        "GET",
+        "/members/" + id,
+        undefined,
+        () => {
+          const member = db.members.find(
+            (m) => m.id === id && !deletedMembers.has(id),
+          );
+          if (!member) throw new Error("Member not found");
+          return {
+            member,
+            subscriptions: mockMemberSubscriptions(id),
+            invoices: db.invoices
+              .filter((i) => i.memberId === id)
+              .map((i) => ({
+                id: i.id,
+                invoiceNumber: i.id,
+                invoiceDate: i.invoiceDate,
+                dueDate: i.dueDate,
+                status: "issued" as const,
+                totalAmount: i.totalAmount,
+                allocatedAmount: i.totalAmount - i.outstandingAmount,
+                outstandingAmount: i.outstandingAmount,
+                paymentStatus: i.status,
+              })),
+            payments: db.payments
+              .filter((p) => p.memberId === id)
+              .map((p) => ({
+                id: p.id,
+                invoiceId: p.invoiceId,
+                amount: p.amount,
+                method: p.method,
+                status: "completed" as const,
+                receivedAt: p.paymentDate,
+                reference: p.transactionReference,
+              })),
+          };
+        },
+      ),
+    create: (input: MemberInput, requestKey: string = uid()) =>
+      action<Member>(
+        "/members",
+        "POST",
+        "/members",
+        { ...input, requestKey },
+        () => {
+          const v = memberSchema.parse(input);
+          const fields = JSON.stringify({
+            ...v,
+            ptStartDate: v.trainerId ? v.ptStartDate : "",
+          });
+          const previous = memberRequests.get(requestKey);
+          if (previous) {
+            if (previous.actor !== session!.id || previous.fields !== fields)
+              throw new Error(
+                "Request key already used for different member details",
+              );
+            return previous.result;
+          }
+          const plan = db.membershipPlans.find(
+            (p) =>
+              p.id === v.planId &&
+              p.isActive &&
+              !deletedMembershipPlans.has(p.id),
+          );
+          if (!plan) throw new Error("Gym plan unavailable");
+          const pt = db.personalTrainingPlans.find(
+            (p) =>
+              p.id === v.ptPlanId &&
+              p.isActive &&
+              !deletedTrainerPlans.has(p.id),
+          );
+          if (
+            v.trainerId &&
+            (!pt ||
+              !db.trainers.some((t) => t.id === v.trainerId && t.isActive))
+          )
+            throw new Error("Choose an active trainer and available PT plan");
+          const id = uid();
+          const member: Member = {
+            id,
+            memberNumber: "WZ-" + id.replaceAll("-", "").toUpperCase(),
+            fullName: v.fullName,
+            email: v.email,
+            phone: normalizeContactPhone(v.phone),
+            joiningDate: v.joiningDate,
+            notes: v.notes,
+            status: "ACTIVE",
+          };
+          db.members.push(member);
+          db.gymSubscriptions.push({
             id: uid(),
             memberId: id,
-            trainerId: v.trainerId,
-            planId: pt.id,
-            startDate: v.ptStartDate,
+            planId: plan.id,
+            startDate: v.startDate,
             endDate: calculateEndDate(
-              v.ptStartDate,
-              pt.duration,
-              pt.durationUnit,
+              v.startDate,
+              plan.duration,
+              plan.durationUnit,
             ),
-            priceAtPurchase: pt.price,
+            priceAtPurchase: plan.price,
             status: "ACTIVE",
           });
-        return id;
-      }),
-    update: (
-      id: string,
-      input: Pick<
-        MemberInput,
-        "fullName" | "email" | "phone" | "joiningDate" | "notes"
-      >,
-    ) =>
+          if (pt)
+            db.trainingSubscriptions.push({
+              id: uid(),
+              memberId: id,
+              trainerId: v.trainerId,
+              planId: pt.id,
+              startDate: v.ptStartDate,
+              endDate: calculateEndDate(
+                v.ptStartDate,
+                pt.duration,
+                pt.durationUnit,
+              ),
+              priceAtPurchase: pt.price,
+              status: "ACTIVE",
+            });
+          memberRequests.set(requestKey, {
+            actor: session!.id,
+            fields,
+            result: clone(member),
+          });
+          return member;
+        },
+      ).then((member) => member.id),
+    update: (id: string, input: Partial<MemberProfileInput>) =>
       action("/members", "PATCH", "/members/" + id, input, () => {
         const m = db.members.find((m) => m.id === id);
-        if (!m) throw new Error("Member not found");
-        Object.assign(m, input);
+        if (!m || deletedMembers.has(id)) throw new Error("Member not found");
+        const parsed = memberProfileSchema.parse({
+          ...m,
+          notes: m.notes ?? "",
+          ...input,
+        });
+        const first = mockMemberSubscriptions(id)
+          .map((s) => s.startDate)
+          .sort()[0];
+        if (
+          input.joiningDate &&
+          input.joiningDate !== m.joiningDate &&
+          first &&
+          input.joiningDate > first
+        )
+          throw new Error(
+            "Joining date cannot be after an existing subscription start",
+          );
+        Object.assign(m, parsed, {
+          phone: normalizeContactPhone(parsed.phone),
+        });
         return m;
       }),
-    archive: (id: string) =>
-      action("/members", "POST", `/members/${id}/archive`, {}, () => {
-        const m = db.members.find((m) => m.id === id);
-        if (m) m.status = "ARCHIVED";
-        return m;
-      }),
+    delete: (id: string) =>
+      action<MemberDeletion>(
+        "/members",
+        "DELETE",
+        `/members/${id}`,
+        undefined,
+        () => {
+          const m = db.members.find((m) => m.id === id);
+          if (!m || deletedMembers.has(id)) throw new Error("Member not found");
+          const history =
+            db.gymSubscriptions.some((s) => s.memberId === id) ||
+            db.trainingSubscriptions.some((s) => s.memberId === id) ||
+            db.invoices.some((i) => i.memberId === id);
+          if (history) {
+            m.status = "ARCHIVED";
+            deletedMembers.add(id);
+          } else db.members = db.members.filter((m) => m.id !== id);
+          return { id, mode: history ? "REMOVED_FROM_DIRECTORY" : "DELETED" };
+        },
+      ),
   },
   membershipPlans: {
     list: () =>
@@ -351,15 +535,116 @@ export const api = {
   },
   trainers: {
     list: () =>
-      MOCK_MODE
-        ? Promise.resolve(clone(scoped().trainers))
-        : request<Trainer[]>("GET", "/trainers"),
+      action<TrainerDirectoryEntry[]>(
+        "/trainers",
+        "GET",
+        "/trainers",
+        undefined,
+        () => db.trainers.map(trainerDirectoryEntry),
+      ),
     get: (id: string) =>
-      MOCK_MODE
-        ? Promise.resolve(clone(scoped().trainers.find((t) => t.id === id)))
-        : request<Trainer>("GET", "/trainers/" + id),
-    create: (v: Omit<Trainer, "id">) => saveTrainer(v),
-    update: (id: string, v: Omit<Trainer, "id">) => saveTrainer(v, id),
+      action<TrainerDetailsData>(
+        "/trainers",
+        "GET",
+        "/trainers/" + id,
+        undefined,
+        () => {
+          const trainer = db.trainers.find((t) => t.id === id);
+          if (!trainer) throw new Error("Trainer not found");
+          return {
+            trainer: trainerDirectoryEntry(trainer),
+            assignments: db.trainingSubscriptions
+              .filter((s) => s.trainerId === id)
+              .map((s) => {
+                const member = db.members.find((m) => m.id === s.memberId)!;
+                return {
+                  id: s.id,
+                  memberId: member.id,
+                  memberName: member.fullName,
+                  memberEmail: member.email,
+                  memberPhone: member.phone,
+                  planId: s.planId,
+                  planName:
+                    db.personalTrainingPlans.find((p) => p.id === s.planId)
+                      ?.name ?? "PT plan",
+                  startDate: s.startDate,
+                  endDate: s.endDate,
+                  priceAtPurchase: s.priceAtPurchase,
+                  status:
+                    s.status === "CANCELLED"
+                      ? ("Cancelled" as const)
+                      : s.startDate > today()
+                        ? ("Upcoming" as const)
+                        : s.endDate < today()
+                          ? ("Expired" as const)
+                          : ("Active" as const),
+                };
+              })
+              .sort((a, b) => b.startDate.localeCompare(a.startDate)),
+            ...(session?.role === "GYM_RECEPTIONIST"
+              ? {}
+              : { payoutRules: mockCommissionRules.get(id) ?? [] }),
+          };
+        },
+      ),
+    create: (v: TrainerInput) => saveTrainer(v),
+    update: (id: string, v: Partial<TrainerInput>) => saveTrainer(v, id),
+    scheduleCommission: (id: string, v: CommissionSchedule) =>
+      action<CommissionRule>(
+        "/finances",
+        "POST",
+        "/trainers/" + id + "/commission-rules",
+        v,
+        () => {
+          if (!db.trainers.some((t) => t.id === id))
+            throw new Error("Trainer not found");
+          if (
+            !Number.isFinite(v.commissionRate) ||
+            v.commissionRate < 0 ||
+            v.commissionRate > 100 ||
+            Math.abs(
+              v.commissionRate * 100 - Math.round(v.commissionRate * 100),
+            ) > 1e-8 ||
+            !/^\d{4}-\d{2}-\d{2}$/.test(v.effectiveFrom) ||
+            calculateEndDate(v.effectiveFrom, 1, "DAY") !== v.effectiveFrom ||
+            v.effectiveFrom <= today() ||
+            (v.effectiveUntil &&
+              (!/^\d{4}-\d{2}-\d{2}$/.test(v.effectiveUntil) ||
+                calculateEndDate(v.effectiveUntil, 1, "DAY") !==
+                  v.effectiveUntil ||
+                v.effectiveUntil < v.effectiveFrom))
+          )
+            throw new Error("Choose a valid future commission period and rate");
+          const rules = mockCommissionRules.get(id) ?? [];
+          const overlapping = rules.filter(
+            (r) =>
+              r.effectiveFrom <= (v.effectiveUntil || "9999-12-31") &&
+              (!r.effectiveUntil || r.effectiveUntil >= v.effectiveFrom),
+          );
+          if (
+            overlapping.length > 1 ||
+            overlapping.some((r) => r.effectiveFrom > today())
+          )
+            throw new Error(
+              "Overlapping or already scheduled rules require review",
+            );
+          const previousEnd = calculateEndDate(v.effectiveFrom, 1, "DAY");
+          // Subtract one calendar day, rather than approximate date arithmetic.
+          const dayBefore = new Date(previousEnd + "T00:00:00Z");
+          dayBefore.setUTCDate(dayBefore.getUTCDate() - 1);
+          for (const rule of overlapping)
+            rule.effectiveUntil = dayBefore.toISOString().slice(0, 10);
+          const rule: CommissionRule = {
+            id: uid(),
+            kind: "percent",
+            value: v.commissionRate,
+            effectiveFrom: v.effectiveFrom,
+            effectiveUntil: v.effectiveUntil || null,
+          };
+          mockCommissionRules.set(id, [...rules, rule]);
+          return rule;
+        },
+      ),
   },
   personalTrainingPlans: {
     list: () =>
@@ -539,28 +824,6 @@ export const api = {
     ) => saveAccess(v, id),
     revoke: (id: string) => saveAccess({ status: "REVOKED" }, id),
   },
-  payouts: {
-    update: (trainerId: string, commissionRate: number) =>
-      action(
-        "/finances",
-        "PATCH",
-        "/trainers/" + trainerId + "/payout",
-        { commissionRate },
-        () => {
-          if (commissionRate < 0 || commissionRate > 100)
-            throw new Error("Commission must be 0–100");
-          db.payoutConfigurations = db.payoutConfigurations.filter(
-            (p) => p.trainerId !== trainerId,
-          );
-          db.payoutConfigurations.push({
-            trainerId,
-            payoutType: "COMMISSION",
-            commissionRate,
-          });
-          return true;
-        },
-      ),
-  },
   finances: {
     summary: () =>
       action("/finances", "GET", "/finances/summary", undefined, () => ({
@@ -652,18 +915,117 @@ function savePlan(
     },
   );
 }
-function saveTrainer(v: Omit<Trainer, "id">, id?: string) {
+function normalizeContactPhone(value: string) {
+  const phone = value.replace(/[ -]/g, "");
+  return phone.length === 10 && !phone.startsWith("+") ? "+91" + phone : phone;
+}
+function mockMemberSubscriptions(id: string): MemberSubscription[] {
+  return [
+    ...db.gymSubscriptions
+      .filter((s) => s.memberId === id)
+      .map((s) => ({
+        ...s,
+        type: "GYM" as const,
+        trainerId: null as string | null,
+      })),
+    ...db.trainingSubscriptions
+      .filter((s) => s.memberId === id)
+      .map((s) => ({ ...s, type: "PT" as const })),
+  ].map((s) => ({
+    id: s.id,
+    type: s.type,
+    planId: s.planId,
+    planName:
+      (s.type === "GYM" ? db.membershipPlans : db.personalTrainingPlans).find(
+        (p) => p.id === s.planId,
+      )?.name ?? "Plan",
+    trainerId: s.trainerId,
+    trainerName: db.trainers.find((t) => t.id === s.trainerId)?.name ?? null,
+    startDate: s.startDate,
+    endDate: s.endDate,
+    priceAtPurchase: s.priceAtPurchase,
+    daysRemaining: calculateDaysRemaining(s.endDate),
+    status:
+      s.status === "CANCELLED"
+        ? "Cancelled"
+        : s.startDate > today()
+          ? "Upcoming"
+          : getMembershipStatus(s.endDate),
+  }));
+}
+function mockMemberDirectoryEntry(member: Member): MemberDirectoryEntry {
+  const subs = mockMemberSubscriptions(member.id).filter(
+    (s) => s.status !== "Cancelled",
+  );
+  const rank = (s: MemberSubscription) =>
+    s.startDate > today() ? 1 : s.endDate < today() ? 2 : 0;
+  const choose = (type: "GYM" | "PT") =>
+    subs
+      .filter((s) => s.type === type)
+      .sort(
+        (a, b) =>
+          rank(a) - rank(b) ||
+          (rank(a) === 1 ? a.startDate.localeCompare(b.startDate) : 0) ||
+          b.endDate.localeCompare(a.endDate) ||
+          b.id.localeCompare(a.id),
+      )[0] ?? null;
+  const gym = choose("GYM");
+  return {
+    ...member,
+    gym,
+    pt: choose("PT"),
+    membershipStatus:
+      member.status === "ARCHIVED" ? "Archived" : (gym?.status ?? "No plan"),
+    outstandingAmount: db.invoices
+      .filter((i) => i.memberId === member.id)
+      .reduce((sum, i) => sum + i.outstandingAmount, 0),
+  };
+}
+function trainerDirectoryEntry(trainer: Trainer): TrainerDirectoryEntry {
+  const history = db.trainingSubscriptions.filter(
+    (s) => s.trainerId === trainer.id,
+  );
+  return {
+    ...trainer,
+    assignedMembersCount: new Set(history.map((s) => s.memberId)).size,
+    activeMembersCount: new Set(
+      history
+        .filter(
+          (s) =>
+            s.status !== "CANCELLED" &&
+            s.startDate <= today() &&
+            s.endDate >= today() &&
+            db.members.some(
+              (m) => m.id === s.memberId && m.status === "ACTIVE",
+            ),
+        )
+        .map((s) => s.memberId),
+    ).size,
+    hasLoginAccess: db.accessAssignments.some(
+      (a) =>
+        a.role === "GYM_TRAINER" &&
+        a.trainerId === trainer.id &&
+        a.status === "ACTIVE" &&
+        a.accountActive !== false,
+    ),
+  };
+}
+function saveTrainer(v: Partial<TrainerInput>, id?: string) {
   return action(
     "/trainers",
     id ? "PATCH" : "POST",
     "/trainers" + (id ? "/" + id : ""),
     v,
     () => {
-      const item = { ...v, id: id || uid() };
       const t = db.trainers.find((t) => t.id === id);
+      if (id && !t) throw new Error("Trainer not found");
+      const parsed = trainerProfileSchema.parse(t ? { ...t, ...v } : v);
+      let phone = parsed.phone.replace(/[ -]/g, "");
+      if (phone.length === 10 && !phone.startsWith("+")) phone = "+91" + phone;
+      const item = { ...parsed, phone, id: id || uid() };
       if (t) Object.assign(t, item);
       else db.trainers.push(item);
-      return item;
+      return trainerDirectoryEntry(item);
     },
   );
 }
@@ -840,8 +1202,11 @@ function mockTrainerDashboard(
 }
 export function resetMock() {
   db = seed();
+  mockCommissionRules = initialCommissionRules();
   deletedMembershipPlans.clear();
   deletedTrainerPlans.clear();
+  deletedMembers.clear();
+  memberRequests.clear();
   session = null;
   billingKeys.clear();
 }

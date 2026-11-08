@@ -74,6 +74,10 @@ function useAccessMutation<T>(
           "access-trainer-options",
           "trainer-options",
           "trainer-dashboard",
+          "trainers",
+          "trainer-details",
+          "workspace",
+          "member-options",
         ].map((key) => client.invalidateQueries({ queryKey: [key] })),
       );
       done?.();

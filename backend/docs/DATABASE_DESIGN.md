@@ -2,6 +2,14 @@
 
 Status: **proposal, not an applied migration**. No remote database was inspected or changed.
 
+This document is historical proposal material, not the current schema contract.
+Use `gym_schema.sql` plus migrations 001–008 for existing implementation and the
+review-only `009_fees_and_finances.sql` for proposed financial changes. Identity
+uses `google_subject`/`display_name`/`active`, shared PT plans have no trainer owner,
+and new financial policies are documented in [fees_finances.md](fees_finances.md).
+No new migration has been applied. Do not implement the obsolete auth columns or
+proportional financial calculations below in place of the current checked RPCs.
+
 ## 1. Scope and conventions
 
 The backend uses Supabase PostgreSQL, FastAPI, and server-managed Google OAuth. Retain those choices. The existing auth code expects `public.users`; retain that table name and the existing `email`, `google_id`, `full_name`, and `picture` columns when preparing a migration.

@@ -56,7 +56,6 @@ export function seed(): Database {
   const trainers = ["Rohan Deshmukh", "Aisha Khan", "Dev Patel"].map(
     (name, i) => ({
       id: "t" + (i + 1),
-      userId: "u" + (i + 2),
       name,
       email: name.toLowerCase().replace(" ", ".") + "@example.com",
       phone: "98765432" + (10 + i),

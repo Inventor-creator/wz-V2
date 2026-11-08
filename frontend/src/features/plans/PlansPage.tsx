@@ -58,9 +58,11 @@ export function PlanForm({
           : api.membershipPlans.create(v),
     onSuccess: async () => {
       await Promise.all(
-        [training ? "trainer-plans" : "membership-plans", "workspace"].map(
-          (key) => client.invalidateQueries({ queryKey: [key] }),
-        ),
+        [
+          training ? "trainer-plans" : "membership-plans",
+          "member-options",
+          "workspace",
+        ].map((key) => client.invalidateQueries({ queryKey: [key] })),
       );
       onClose();
     },
@@ -166,9 +168,11 @@ export function PlanCards({
             : "Plan removed from the catalogue. Existing subscriptions and financial history are retained.",
         );
       await Promise.all(
-        [training ? "trainer-plans" : "membership-plans", "workspace"].map(
-          (key) => client.invalidateQueries({ queryKey: [key] }),
-        ),
+        [
+          training ? "trainer-plans" : "membership-plans",
+          "member-options",
+          "workspace",
+        ].map((key) => client.invalidateQueries({ queryKey: [key] })),
       );
       setToggle(null);
     },

@@ -2,6 +2,14 @@
 
 Functional role-aware gym management built with the existing React 19, strict TypeScript, Vite, Tailwind and npm setup. UI styles are reused from the **wzv2 OpenDesign** project.
 
+Fees Due and Finances now use dedicated real financial APIs, exact decimal-string
+commands, receipt/refund history, expense lifecycle, reports and CSV. They do not
+use the workspace snapshot or development financial seed. Required migration
+**009_fees_and_finances.sql is CREATED — NOT APPLIED — AWAITING MANUAL REVIEW**.
+Real database financial verification is **BLOCKED — PENDING MANUAL MIGRATION**.
+See `backend/docs/fees_finances.md` and `backend/docs/financial_testing.md` before
+deployment. Demo authentication cannot authorize these real backend endpoints.
+
 ## Start
 
 ```sh
@@ -30,6 +38,17 @@ search/status filters and safe deletion without a workspace snapshot. Apply
 backend migration `006` after `001`–`005`. Plans are shared; select the trainer
 separately when assigning a member. See `backend/docs/trainer_plans.md`.
 
+**Trainers** now has independent list/detail queries, profile create/edit/status,
+assignment history, and owner-only future commission scheduling. Apply migration
+`007` after `001`–`006`. Profile deactivation stops new PT assignments; it does not
+revoke login grants or erase history. See `backend/docs/trainers.md`.
+
+**Members** now has dedicated add/edit/delete, list/detail and onboarding-option
+queries. Apply backend migration `008` after `001`–`007`. Contact edits do not
+rewrite subscriptions; deleting a referenced member removes them from the directory
+without erasing debts/history. Adding a member records subscriptions, not a payment
+or billing run. See `backend/docs/members.md`.
+
 ## Checks
 
 ```sh
@@ -43,7 +62,7 @@ npm run preview
 ## Features
 
 - Protected routes and permission-based navigation for four roles.
-- Members, separate gym/PT subscriptions, contact edits, archive confirmation and history.
+- Members, atomic gym/optional PT onboarding, contact edits, safe deletion and history.
 - Membership plans, trainers and shared PT plans with validated forms.
 - Trainer-scoped dashboard with expiry sorting and configured payout estimates.
 - Billing preview, confirmation and development idempotency protection.

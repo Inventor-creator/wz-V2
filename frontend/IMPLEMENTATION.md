@@ -46,16 +46,25 @@ Implemented prototype equivalents: Google login/error/unauthorized, finance over
 - `src/components`: shared shell, header/sidebar, tables, status, dialogs, loading/error/empty states, forms and KPI cards.
 - `src/features/members`: filters, numeric expiry sorting, pagination, creation, contact edits, archiving, details and history.
 - `src/features/plans`, `src/features/trainers`: shared gym/PT plan CRUD, trainer profiles, scoped dashboard, payout configuration. PT plans are not trainer-owned; assignments choose the trainer separately.
-- `src/features/billing`, `src/features/payments`: billing preview/confirmation, invoice balances, partial payments, receipts.
-- `src/features/finances`, `src/features/access`: reports and privileged email assignments.
+- `src/features/payments`: dedicated Fees Due queries, exact partial/full receipts,
+  refund/reversal history, member restoration, reviewed legacy charge approval,
+  new subscriptions/renewals and cancellation. `features/billing` is legacy demo
+  compatibility code, not the production billing policy.
+- `src/features/finances`: real cash reports, transaction ledger, expense lifecycle,
+  audit and CSV. `src/lib/financialApi.ts`, `financial.ts`, `types/financial.ts`
+  provide decimal-string contracts, cache invalidation and durable retry keys.
+- `src/features/access`: privileged email assignments.
 - `src/types/domain.ts`: domain models and separate subscription types.
 - `src/lib`: API adapters, centralized permissions, Zod schemas, date and INR utilities.
 - `src/mocks/seed.ts`: realistic Indian development fixtures, relative dates.
 - `src/tests`: permissions, routing, sidebar, scoping, expiry, validation, billing and payment contract tests.
 
-## Production integration required
+## Production integration and deployment
 
-The existing FastAPI backend implements `/auth/login`, `/auth/callback`, `/auth/logout`, `/auth/me`. Those paths are preserved. It currently returns no role/status in `/auth/me`; the frontend deliberately fails closed rather than granting a default role. Extend that trusted session response to:
+The FastAPI backend implements `/auth/login`, `/auth/callback`, `/auth/logout`,
+`/auth/me`. Those paths are preserved. `/auth/me` already resolves live roles and
+active grants; the frontend fails closed rather than granting a default role.
+Its current session response is:
 
 ```ts
 { id: string; name: string; email: string; role: Role;
@@ -66,35 +75,61 @@ The backend callback can continue redirecting to `/`; `/auth/callback` is also s
 
 ### Domain HTTP boundary
 
-`src/lib/api.ts` exposes typed adapters. The currently missing server routes must return these domain types (no mock fallback on HTTP failure):
+`src/lib/api.ts` exposes existing feature adapters; `financialApi.ts` exposes the
+dedicated financial boundary. No mock fallback occurs on real HTTP failure.
+Migrations must be reviewed/applied manually before dependent features run.
 
-- `GET /gym/workspace`: `Database` shape, strictly role-scoped. Trainer responses must include **only** their trainer profile, PT plans/subscriptions, assigned member contacts and own payout configuration; exclude gym memberships, all invoices/payments, access assignments and other trainers. Receptionists must not receive payout configurations or access assignments. Aggregate financial endpoints are owner/admin-only.
-- `GET/POST /members`, `GET/PATCH /members/:id`, `POST /members/:id/archive`.
+- `/gym/workspace`: legacy demo adapter contract, not a production dependency of
+  any of the eight feature pages. Existing demo calls are retained for compatibility
+  tests only. They do not provide authorization for dedicated financial APIs.
+- Implemented with migration 008: `GET/POST /members`, `GET /members/options`, `GET/PATCH/DELETE /members/:id`. Dedicated directory/detail contracts replace the Members workspace dependency; creation atomically snapshots gym/optional PT terms, edits affect contacts only, and deletion preserves referenced records. See `backend/docs/members.md`. The old archive adapter is replaced by explicit safe deletion.
 - `GET/POST /membership-plans`, `PATCH /membership-plans/:id` (archive uses `isActive:false`).
-- `GET/POST /trainers`, `GET/PATCH /trainers/:id`.
+- Implemented with migration 007: `GET/POST /trainers`, `GET/PATCH /trainers/:id`, and owner-only `POST /trainers/:id/commission-rules` with a future effective period. Profiles are independent of login grants. These pages do not require `/gym/workspace`; see `backend/docs/trainers.md`.
 - Implemented: `GET/POST /personal-training-plans`, `GET/PATCH/DELETE /personal-training-plans/:id`, using shared catalogue fields and fixed calendar days. The dedicated Trainer Plans page does not use `/gym/workspace`. Apply migration 006 after 001–005; see `backend/docs/trainer_plans.md` for safe deletion/audit/security semantics.
-- `POST /billing/preview`: `BillingCharge[]`; no side effects.
-- `POST /billing/run`: `{idempotencyKey:string}` → created invoice count. Enforce unique subscription/billing period and persisted idempotency atomically. Independently charge gym and PT, use historical prices, never mark paid or extend subscriptions implicitly. Use transactionally consistent previews in the production server.
-- `GET /invoices`, `GET /invoices/:id`; `GET/POST /payments`.
-- `GET /finances/summary`, `/finances/trends`, `/finances/payouts`; `PATCH /trainers/:id/payout` with `{commissionRate}`.
+- Financial APIs: `GET /fees-due`, `/fees-due/:id`, `/finances`,
+  `/finances/export`; checked payment/refund/adjustment/expense/subscription/member
+  lifecycle commands. See `backend/docs/fees_finances.md` for all paths/contracts.
+  The old `/billing/*`, `/invoices`, `/payments`, `/finances/summary|trends|payouts`
+  adapter methods are demo compatibility only, not production page dependencies.
 - `GET/POST /access-assignments`, `PATCH /access-assignments/:id`.
 
-The workspace endpoint supplies most screens' role-scoped query; the Access Management screen now uses dedicated `/access-assignments` and `/access-assignments/trainers` queries and does not require a workspace endpoint. Those backend routes are implemented; apply the migrations documented in `backend/docs/access_management.md` before using them. Granular list adapters are also available for further backend integration. Production should paginate large datasets server-side and replace the remaining workspace snapshot with feature-specific queries. Payment creation must atomically revalidate current balance, prevent duplicates, create a durable receipt and update invoice status. Persist plan references and subscription purchase prices. Access changes protect the permanent Super Admin, preserve grant history, and securely link trainer profiles through role assignments.
+All eight pages now use dedicated feature queries. Fees/Finances pagination,
+filtering and reporting run on the backend; its checked SQL dataset currently
+loads a single gym's history into memory, so large installations should move the
+equivalent aggregation/pagination into SQL. Invoice payment status is derived,
+not manually updated. Access changes retain existing protections and grant links.
 
 ## Business policies and limitations
 
 - Dates are calendar days in Asia/Kolkata. Final subscription day is inclusive (0 days remaining is still valid). Monthly/yearly durations use clamped calendar arithmetic, then subtract one day. Thus Jan 31 + one month ends Feb 27 in a non-leap year. Change this documented policy in both server and frontend if gym rules differ.
-- Member edits update contact/profile data only. They intentionally do not overwrite historical subscriptions. A dedicated renewal/change-subscription workflow and backend rules are still needed.
+- Member edits update contact/profile data only. New membership/renewal controls
+  create new snapshot subscriptions; explicit cancellation preserves all charges.
 - Billing demo invoices expired, unbilled recorded subscriptions once; it does not simulate recurring renewals, taxation, refunds or proration.
-- Finance collections are filtered by payment date; category allocation is proportional to invoice line amounts. Outstanding balances are current balances for invoices issued by report end, **not historical as-of balances**. Fixed payouts, if returned by the server, are interpreted per report period. Estimates are not disbursements. Unlinked historic PT payments cannot be attributed to a trainer. Revenue after payouts is not net profit.
+- Real financial pages use exact recorded allocations/refund provenance and
+  Python Decimal/PostgreSQL numeric, never proportional browser arithmetic.
+  Current receivables are not historical as-of balances and never collections.
+  Actual paid trainer payouts count as cash outflows, not guessed fixed salaries.
+  Expense reversals retain original payments plus returned-cash offsets. Net cash
+  flow is not profit. Unknown legacy facts are flagged, never invented.
 - Tests cover frontend behavior and mock contracts only; they are not backend security tests or a substitute for real OAuth, concurrent payment/billing integration tests, or an accessibility audit.
 - Full authenticated-page visual regression and end-to-end real-backend testing remain to be performed. Responsive CSS follows the retrieved source; login screenshots were inspected at desktop and mobile widths.
 - Dependency audit: production dependency vulnerabilities were addressed with non-breaking updates. Remaining dev-tool advisories must be reviewed before deployment; do not force a breaking ESLint downgrade without checking compatibility.
 
-## Verification results
+## Historical verification results
 
 - `npm test`: 24 passing tests across domain/mock contracts and rendered routing/sidebar/billing interactions.
 - `npm run lint`: passed with no warnings.
 - `npm run build`: strict TypeScript and production build passed. Feature routes and Recharts are lazy loaded; no oversized-chunk warning in the final build.
 - `npm audit --omit=dev`: zero production vulnerabilities. Full audit retains 10 moderate development-tool dependency advisories.
 - Inspected real-browser login screenshots at 1440px and 390px. Authenticated screen layouts were compared to the retrieved OpenDesign source, but full browser visual regression of every authenticated screen and 1024/768px review is not yet complete. No claim of pixel-perfect or exhaustive accessibility verification is made.
+
+## Financial implementation verification
+
+**ALL NEW SQL MIGRATIONS HAVE BEEN CREATED BUT NOT APPLIED.** Required 009 follows
+001–008. No SQL migration runner was executed for this task, including against
+disposable databases. Backend unit/mock/static and frontend regression results
+are recorded in `specs/fees_finances_report.md`; real DB/concurrency/HTTP E2E and
+authenticated browser financial testing remain **BLOCKED — PENDING MANUAL
+MIGRATION** or explicitly not executed. See `backend/docs/financial_testing.md`.
+The production financial pages always require real backend Google authentication;
+development demo authentication does not simulate financial success.

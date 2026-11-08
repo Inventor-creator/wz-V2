@@ -1,394 +1,566 @@
 import { useState } from "react";
-import { groupBy } from "../../lib/groupBy";
+import { keepPreviousData, useQuery, useMutation } from "@tanstack/react-query";
+import { financialApi } from "../../lib/financialApi";
+import type {
+  Expense,
+  FinancialFilters,
+  Transaction,
+} from "../../types/financial";
+import { today, dateLabel } from "../../lib/dates";
 import {
-  ResponsiveContainer,
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  PieChart,
-  Pie,
-  Cell,
-  BarChart,
-  Bar,
-} from "recharts";
-import type { Database } from "../../types/domain";
-import {
-  today,
-  money,
-  dateLabel,
-  calculateDaysRemaining,
-} from "../../lib/dates";
-import {
-  useWorkspace,
   PageHeader,
-  FinanceKpiCard,
+  StatCard,
   DataTable,
   StatusBadge,
+  Modal,
   LoadingSkeleton,
   ErrorState,
 } from "../../components/ui";
-export function financials(db: Database, start: string, end: string) {
-  const payments = db.payments.filter(
-    (p) => p.paymentDate >= start && p.paymentDate <= end,
+import { FinancialNotice, SortSelect } from "../payments/financialShared";
+import { inr, methodOptions } from "../../lib/financial";
+import { ReasonDialog } from "../payments/SubscriptionDialog";
+import { InvoiceDialog } from "../payments/FeesPage";
+import { ExpenseDialog, PostExpenseDialog } from "./ExpenseDialog";
+
+function Breakdown({
+  title,
+  values,
+}: {
+  title: string;
+  values: Record<string, string>;
+}) {
+  return (
+    <section className="panel">
+      <h3>{title}</h3>
+      <DataTable
+        rows={Object.entries(values).map(([id, amount]) => ({ id, amount }))}
+        columns={[
+          { label: "Category / plan", render: (r) => r.id },
+          { label: "Net amount", render: (r) => inr(r.amount) },
+        ]}
+      />
+    </section>
   );
-  const collected = payments.reduce((s, p) => s + p.amount, 0);
-  const pt = payments.reduce((s, p) => {
-    const i = db.invoices.find((i) => i.id === p.invoiceId);
-    return (
-      s +
-      p.amount *
-        (i
-          ? i.lineItems
-              .filter((l) => l.feeType === "PT")
-              .reduce((n, l) => n + l.amount, 0) / i.totalAmount
-          : 0)
-    );
-  }, 0);
-  const payouts = db.trainers.map((t) => {
-    const config = db.payoutConfigurations.find((c) => c.trainerId === t.id);
-    const subscriptions = new Set(
-      db.trainingSubscriptions
-        .filter((s) => s.trainerId === t.id)
-        .map((s) => s.id),
-    );
-    const trainingRevenue = payments.reduce((total, p) => {
-      const invoice = db.invoices.find((i) => i.id === p.invoiceId);
-      return (
-        total +
-        (invoice
-          ? (p.amount *
-              invoice.lineItems
-                .filter(
-                  (l) =>
-                    l.feeType === "PT" && subscriptions.has(l.subscriptionId),
-                )
-                .reduce((s, l) => s + l.amount, 0)) /
-            invoice.totalAmount
-          : 0)
-      );
-    }, 0);
-    return {
-      id: t.id,
-      name: t.name,
-      trainingRevenue,
-      rule: config
-        ? config.payoutType === "COMMISSION"
-          ? `${config.commissionRate}% commission`
-          : "Fixed per report period"
-        : "Not Configured",
-      amount: config
-        ? config.payoutType === "COMMISSION"
-          ? (trainingRevenue * config.commissionRate) / 100
-          : config.fixedAmount
-        : null,
-    };
-  });
-  const payout = payouts.reduce((s, p) => s + (p.amount || 0), 0);
-  const days = groupBy(payments, (p) => p.paymentDate);
-  const trends = Array.from(days, ([date, ps]) => ({
-    date: dateLabel(date),
-    amount: ps.reduce((s, p) => s + p.amount, 0),
-  })).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-  return {
-    payments,
-    collected,
-    pt,
-    gym: collected - pt,
-    payout,
-    payouts,
-    trends,
-  };
 }
+
 export function FinancesPage() {
-  const q = useWorkspace();
-  const [range, setRange] = useState("This Month");
-  const [customStart, setCustomStart] = useState(today().slice(0, 7) + "-01");
-  const [customEnd, setCustomEnd] = useState(today());
-  if (q.isPending) return <LoadingSkeleton />;
-  if (!q.data) return <ErrorState error={q.error} />;
-  const db = q.data;
-  const now = new Date(today() + "T00:00:00Z");
-  const offset = range === "Last Month" ? 1 : range === "Last 3 Months" ? 2 : 0;
-  const start =
-    range === "Custom Range"
-      ? customStart
-      : new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - offset, 1))
-          .toISOString()
-          .slice(0, 10);
-  const end =
-    range === "Custom Range"
-      ? customEnd
-      : range === "Last Month"
-        ? new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 0))
-            .toISOString()
-            .slice(0, 10)
-        : today();
-  const f = financials(db, start, end);
-  const outstanding = db.invoices.filter(
-    (i) => i.invoiceDate <= end && i.outstandingAmount > 0,
-  );
-  const balance = outstanding.reduce((s, i) => s + i.outstandingAmount, 0);
-  const categories = [
-    { name: "Gym membership", amount: f.gym },
-    { name: "Personal training", amount: f.pt },
-  ];
-  const aging = [
-    { name: "Not due", min: -Infinity, max: -1 },
-    { name: "0–30 days", min: 0, max: 30 },
-    { name: "31–60 days", min: 31, max: 60 },
-    { name: "60+ days", min: 61, max: Infinity },
-  ].map((b) => ({
-    name: b.name,
-    amount: outstanding
-      .filter((i) => {
-        const age = -calculateDaysRemaining(i.dueDate, end);
-        return age >= b.min && age <= b.max;
-      })
-      .reduce((s, i) => s + i.outstandingAmount, 0),
-  }));
-  const months = groupBy(f.payments, (p) => p.paymentDate.slice(0, 7));
-  const monthly = Array.from(months, ([date, ps]) => ({
-    date,
-    amount: ps.reduce((s, p) => s + p.amount, 0),
-  }));
-  const tooltip = {
-    contentStyle: {
-      background: "#20231c",
-      border: "1px solid #30342b",
-      borderRadius: 10,
-    },
-    formatter: (v: unknown) => money(Number(v)),
-  };
+  const [filters, setFilters] = useState<FinancialFilters>({
+    start: today().slice(0, 7) + "-01",
+    end: today(),
+    search: "",
+    type: "",
+    method: "",
+    status: "",
+    sort: "date",
+    direction: "desc",
+    page: 1,
+    pageSize: 20,
+  });
+  const [tab, setTab] = useState("transactions");
+  const [editing, setEditing] = useState<Expense | "new" | null>(null);
+  const [posting, setPosting] = useState<Expense | null>(null);
+  const [reversing, setReversing] = useState<Expense | null>(null);
+  const [detail, setDetail] = useState<Transaction | null>(null);
+  const [invoiceId, setInvoice] = useState<string | null>(null);
+  const [expenseSearch, setExpenseSearch] = useState("");
+  const [expenseStatus, setExpenseStatus] = useState("");
+  const [expensePage, setExpensePage] = useState(1);
+  const query = useQuery({
+    queryKey: ["finances", filters],
+    queryFn: () => financialApi.finances(filters),
+    placeholderData: keepPreviousData,
+    refetchOnWindowFocus: true,
+    refetchInterval: 60_000,
+  });
+  const exporting = useMutation({
+    mutationFn: () => financialApi.export(filters),
+  });
+  const update = (key: string, value: string) =>
+    setFilters((f) => ({ ...f, [key]: value, page: 1 }));
+  const data = query.data;
+  const expenses = (data?.expenses || [])
+    .filter(
+      (e) =>
+        (!expenseStatus || e.status === expenseStatus) &&
+        `${e.category} ${e.description} ${e.reference}`
+          .toLowerCase()
+          .includes(expenseSearch.toLowerCase()),
+    )
+    .sort(
+      (a, b) =>
+        b.incurredOn.localeCompare(a.incurredOn) || a.id.localeCompare(b.id),
+    );
   return (
     <>
       <PageHeader
         title="Finances"
-        description="A clear view of your gym’s financial health."
+        description="Cash collections, expenses and reports from the same financial ledger as Fees Due."
       >
-        <select
-          aria-label="Financial date range"
-          value={range}
-          onChange={(e) => setRange(e.target.value)}
+        <button
+          className="btn"
+          disabled={exporting.isPending}
+          onClick={() => exporting.mutate()}
         >
-          {["This Month", "Last Month", "Last 3 Months", "Custom Range"].map(
-            (r) => (
-              <option key={r}>{r}</option>
-            ),
-          )}
-        </select>
+          Export transactions CSV
+        </button>
+        <button className="btn primary" onClick={() => setEditing("new")}>
+          Add expense
+        </button>
       </PageHeader>
-      {range === "Custom Range" && (
-        <div className="toolbar">
-          <label className="field">
-            From
-            <input
-              type="date"
-              value={customStart}
-              onChange={(e) => setCustomStart(e.target.value)}
-            />
-          </label>
-          <label className="field">
-            To
-            <input
-              type="date"
-              min={customStart}
-              value={customEnd}
-              onChange={(e) => setCustomEnd(e.target.value)}
-            />
-          </label>
-        </div>
-      )}
-      {start > end && (
-        <ErrorState error={new Error("Start date must precede end date")} />
-      )}
-      <div className="metrics">
-        <FinanceKpiCard
-          main
-          label="Total Revenue Collected"
-          value={money(f.collected)}
-          note="Payments received during selected period"
-        />
-        <FinanceKpiCard
-          label="Gym Membership Revenue"
-          value={money(f.gym)}
-          note="Collected · gym membership fees"
-        />
-        <FinanceKpiCard
-          label="Personal Training Revenue"
-          value={money(f.pt)}
-          note="Collected · personal training fees"
-        />
-        <FinanceKpiCard
-          label="Outstanding Receivables"
-          value={money(balance)}
-          note="Current balances on invoices issued by period end"
-        />
-        <FinanceKpiCard
-          label="Trainer Payouts"
-          value={money(f.payout)}
-          note="Configured estimates; unconfigured trainers excluded"
-        />
-        <FinanceKpiCard
-          label="Revenue After Trainer Payouts"
-          value={money(f.collected - f.payout)}
-          note="Before operating expenses · not net profit"
-        />
+      <FinancialNotice />
+      <div className="toolbar">
+        <label>
+          From{" "}
+          <input
+            aria-label="Report start"
+            type="date"
+            value={filters.start}
+            onChange={(e) => update("start", e.target.value)}
+          />
+        </label>
+        <label>
+          Through{" "}
+          <input
+            aria-label="Report end"
+            type="date"
+            value={filters.end}
+            onChange={(e) => update("end", e.target.value)}
+          />
+        </label>
       </div>
-      <div className="finance-grid">
-        <section className="panel">
-          <div className="panel-head">
-            <div>
-              <h2>Revenue over time</h2>
-              <p>Collected payments, not invoiced amounts</p>
+      {exporting.error && <ErrorState error={exporting.error} />}
+      {exporting.isSuccess && <p role="status">CSV downloaded.</p>}
+      {query.isPending ? (
+        <LoadingSkeleton />
+      ) : query.error ? (
+        <ErrorState error={query.error} retry={() => void query.refetch()} />
+      ) : (
+        data && (
+          <>
+            {data.warnings.map((w) => (
+              <p className="notice" role="alert" key={w}>
+                {w}
+              </p>
+            ))}
+            <div className="metrics">
+              <StatCard
+                label="Net collections"
+                value={inr(data.summary.collections)}
+                note={`Gross ${inr(data.summary.grossCollections)} less refunds ${inr(data.summary.refunds)}`}
+              />
+              <StatCard
+                label="Paid expenses"
+                value={inr(data.summary.expenses)}
+                note="Payments less returned/reversed expenses"
+              />
+              <StatCard
+                label="Net cash flow"
+                value={inr(data.summary.netCashFlow)}
+                note={`After expenses and ${inr(data.summary.trainerPayouts)} actual trainer payouts; not profit`}
+              />
+              <StatCard
+                label="Outstanding receivables"
+                value={inr(data.summary.outstanding)}
+                note="Current balances, not revenue or period-end receivables"
+              />
+              <StatCard
+                label="This month collections"
+                value={inr(data.summary.currentMonthCollections)}
+                note="Current calendar month, Asia/Kolkata"
+              />
+              <StatCard
+                label="This month expenses"
+                value={inr(data.summary.currentMonthExpenses)}
+                note="Current calendar month, not selected report range"
+              />
             </div>
-          </div>
-          <div className="chart-meta">
-            <div className="chart-total">{money(f.collected)}</div>
-            <span className="legend">
-              <i className="key" />
-              Collections
-            </span>
-          </div>
-          <div className="rechart">
-            <ResponsiveContainer width="100%" height={230}>
-              <AreaChart data={f.trends}>
-                <CartesianGrid stroke="#30342b" strokeDasharray="3 5" />
-                <XAxis
-                  dataKey="date"
-                  tick={{ fill: "#a4aa9e", fontSize: 10 }}
-                />
-                <YAxis tick={{ fill: "#a4aa9e", fontSize: 10 }} width={55} />
-                <Tooltip {...tooltip} />
-                <Area
-                  dataKey="amount"
-                  stroke="#9fe870"
-                  fill="#9fe87022"
-                  strokeWidth={2}
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </section>
-        <section className="panel">
-          <div className="panel-head">
-            <div>
-              <h2>Revenue by category</h2>
-              <p>Share of collected revenue</p>
-            </div>
-          </div>
-          <div className="rechart">
-            <ResponsiveContainer width="100%" height={210}>
-              <PieChart>
-                <Pie
-                  data={categories}
-                  dataKey="amount"
-                  nameKey="name"
-                  innerRadius={60}
-                  outerRadius={85}
-                  stroke="none"
+            <p className="notice">
+              Report KPIs use the inclusive date range above. Transaction
+              search/type/status filters affect the table and CSV only. Refunds
+              are dated cash outflows; fee adjustments are non-cash. Expense
+              reversals represent money returned, not merely cancelling a vendor
+              bill.
+            </p>
+            <div className="tabs" role="tablist" aria-label="Finance view">
+              {["transactions", "expenses", "reports"].map((t) => (
+                <button
+                  className={tab === t ? "btn primary" : "btn"}
+                  role="tab"
+                  aria-selected={tab === t}
+                  key={t}
+                  onClick={() => setTab(t)}
                 >
-                  {categories.map((c, i) => (
-                    <Cell key={c.name} fill={i ? "#68755d" : "#9fe870"} />
-                  ))}
-                </Pie>
-                <Tooltip {...tooltip} />
-              </PieChart>
-            </ResponsiveContainer>
-            <div className="legend category-legend">
-              {categories.map((c, i) => (
-                <span key={c.name}>
-                  <i className={"key" + (i ? " gray" : "")} />
-                  {c.name}
-                  <strong>{money(c.amount)}</strong>
-                </span>
+                  {t[0].toUpperCase() + t.slice(1)}
+                </button>
               ))}
             </div>
-          </div>
-        </section>
-      </div>
-      <div className="mini-grid">
-        {[
-          { title: "Outstanding payments aging", data: aging, key: "name" },
-          {
-            title: "Monthly collections trend",
-            data: monthly.map((m) => ({ name: m.date, amount: m.amount })),
-            key: "name",
-          },
-        ].map((c) => (
-          <section className="panel" key={c.title}>
-            <div className="panel-head">
-              <h2>{c.title}</h2>
-            </div>
-            <div className="rechart">
-              <ResponsiveContainer width="100%" height={190}>
-                <BarChart data={c.data}>
-                  <XAxis
-                    dataKey={c.key}
-                    tick={{ fill: "#a4aa9e", fontSize: 10 }}
+            {tab === "transactions" && (
+              <>
+                <div className="toolbar">
+                  <input
+                    aria-label="Search transactions"
+                    placeholder="Search transactions"
+                    value={filters.search}
+                    onChange={(e) => update("search", e.target.value)}
                   />
-                  <YAxis tick={{ fill: "#a4aa9e", fontSize: 10 }} width={55} />
-                  <Tooltip {...tooltip} />
-                  <Bar dataKey="amount" fill="#9fe870" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </section>
-        ))}
-      </div>
-      <h2 className="section-title">Trainer payout breakdown</h2>
-      <DataTable
-        rows={f.payouts}
-        columns={[
-          { label: "Trainer", render: (t) => t.name },
-          { label: "PT collections", render: (t) => money(t.trainingRevenue) },
-          { label: "Payout rule", render: (t) => t.rule },
-          {
-            label: "Estimated payout",
-            render: (t) =>
-              t.amount === null ? "Not Configured" : money(t.amount),
-          },
-        ]}
-      />
-      <p className="text-muted">
-        Payout attribution requires an invoice line linked to a trainer
-        subscription. Unlinked historical collections are not assigned to a
-        trainer.
-      </p>
-      <h2 className="section-title">Recent payments</h2>
-      <DataTable
-        rows={[...f.payments].sort((a, b) =>
-          b.paymentDate.localeCompare(a.paymentDate),
-        )}
-        columns={[
-          {
-            label: "Member",
-            render: (p) =>
-              db.members.find((m) => m.id === p.memberId)?.fullName,
-          },
-          { label: "Receipt", render: (p) => p.id },
-          { label: "Date", render: (p) => dateLabel(p.paymentDate) },
-          { label: "Method", render: (p) => p.method },
-          { label: "Amount collected", render: (p) => money(p.amount) },
-        ]}
-      />
-      <h2 className="section-title">Outstanding invoices</h2>
-      <DataTable
-        rows={outstanding}
-        columns={[
-          { label: "Invoice", render: (i) => i.id },
-          {
-            label: "Member",
-            render: (i) =>
-              db.members.find((m) => m.id === i.memberId)?.fullName,
-          },
-          { label: "Amount invoiced", render: (i) => money(i.totalAmount) },
-          { label: "Balance due", render: (i) => money(i.outstandingAmount) },
-          { label: "Status", render: (i) => <StatusBadge status={i.status} /> },
-        ]}
-      />
+                  <select
+                    aria-label="Transaction type"
+                    value={filters.type}
+                    onChange={(e) => update("type", e.target.value)}
+                  >
+                    <option value="">All types</option>
+                    {[
+                      "payment",
+                      "refund",
+                      "reversal",
+                      "expense",
+                      "expense_reversal",
+                      "trainer_payout",
+                      "adjustment",
+                    ].map((t) => (
+                      <option key={t}>{t}</option>
+                    ))}
+                  </select>
+                  <select
+                    aria-label="Transaction method"
+                    value={filters.method}
+                    onChange={(e) => update("method", e.target.value)}
+                  >
+                    <option value="">All methods</option>
+                    {methodOptions.map((m) => (
+                      <option key={m}>{m}</option>
+                    ))}
+                  </select>
+                  <select
+                    aria-label="Transaction status"
+                    value={filters.status}
+                    onChange={(e) => update("status", e.target.value)}
+                  >
+                    <option value="">All statuses</option>
+                    {[
+                      "completed",
+                      "pending",
+                      "failed",
+                      "reversed",
+                      "partially_refunded",
+                      "recorded",
+                      "paid",
+                      "void",
+                    ].map((s) => (
+                      <option key={s}>{s}</option>
+                    ))}
+                  </select>
+                  <SortSelect
+                    value={filters}
+                    update={update}
+                    options={["date", "amount", "type", "entity", "status"]}
+                  />
+                </div>
+                <DataTable
+                  rows={data.rows}
+                  columns={[
+                    {
+                      label: "Transaction / date",
+                      render: (r) => (
+                        <>
+                          <small>{r.id}</small>
+                          {dateLabel(r.date || "")}
+                        </>
+                      ),
+                    },
+                    {
+                      label: "Type",
+                      render: (r) => r.type.replaceAll("_", " "),
+                    },
+                    { label: "Entity", render: (r) => r.entity },
+                    { label: "Amount", render: (r) => inr(r.amount) },
+                    { label: "Method", render: (r) => r.method || "—" },
+                    {
+                      label: "Status",
+                      render: (r) => <StatusBadge status={r.status} />,
+                    },
+                    { label: "Reference", render: (r) => r.reference || "—" },
+                    {
+                      label: "Actions",
+                      render: (r) => (
+                        <button
+                          className="btn small"
+                          onClick={() => setDetail(r)}
+                        >
+                          Details
+                        </button>
+                      ),
+                    },
+                  ]}
+                  pageSize={data.pageSize}
+                  pagination={{
+                    page: data.page,
+                    total: data.total,
+                    onChange: (page) => setFilters((f) => ({ ...f, page })),
+                  }}
+                />
+              </>
+            )}
+            {tab === "expenses" && (
+              <>
+                <p>
+                  All expense drafts and payment history, independent of report
+                  dates. Paid entries are immutable; voiding a paid expense
+                  records returned cash today.
+                </p>
+                <div className="toolbar">
+                  <input
+                    aria-label="Search expenses"
+                    placeholder="Search expenses"
+                    value={expenseSearch}
+                    onChange={(e) => {
+                      setExpenseSearch(e.target.value);
+                      setExpensePage(1);
+                    }}
+                  />
+                  <select
+                    aria-label="Expense status"
+                    value={expenseStatus}
+                    onChange={(e) => {
+                      setExpenseStatus(e.target.value);
+                      setExpensePage(1);
+                    }}
+                  >
+                    <option value="">All statuses</option>
+                    <option value="recorded">Draft</option>
+                    <option value="paid">Paid</option>
+                    <option value="void">Void</option>
+                  </select>
+                </div>
+                <DataTable
+                  rows={expenses.slice(
+                    (expensePage - 1) * 20,
+                    expensePage * 20,
+                  )}
+                  columns={[
+                    {
+                      label: "Expense",
+                      render: (e) => (
+                        <>
+                          <strong>{e.category}</strong>
+                          <small>{e.description}</small>
+                        </>
+                      ),
+                    },
+                    {
+                      label: "Incurred / paid",
+                      render: (e) =>
+                        `${dateLabel(e.incurredOn)} / ${dateLabel(e.date || "")}`,
+                    },
+                    { label: "Amount", render: (e) => inr(e.amount) },
+                    {
+                      label: "Status",
+                      render: (e) => (
+                        <StatusBadge
+                          status={e.status === "recorded" ? "Draft" : e.status}
+                        />
+                      ),
+                    },
+                    {
+                      label: "Method / reference",
+                      render: (e) =>
+                        `${e.method || "—"} / ${e.reference || "—"}`,
+                    },
+                    {
+                      label: "Created by",
+                      render: (e) => e.createdBy || "Legacy / unknown",
+                    },
+                    {
+                      label: "Actions",
+                      render: (e) => (
+                        <div className="actions">
+                          {e.status === "recorded" && (
+                            <>
+                              <button
+                                className="btn small"
+                                onClick={() => setEditing(e)}
+                              >
+                                Edit
+                              </button>
+                              <button
+                                className="btn small"
+                                onClick={() => setPosting(e)}
+                              >
+                                Record payment
+                              </button>
+                            </>
+                          )}
+                          {e.status !== "void" && (
+                            <button
+                              className="btn small danger"
+                              onClick={() => setReversing(e)}
+                            >
+                              {e.status === "recorded"
+                                ? "Void draft"
+                                : "Reverse"}
+                            </button>
+                          )}
+                          <button
+                            className="btn small"
+                            onClick={() =>
+                              setDetail({
+                                id: e.id,
+                                date: e.date || e.incurredOn,
+                                type: "expense",
+                                amount: e.amount,
+                                entity: e.category,
+                                method: e.method,
+                                status: e.status,
+                                reference: e.reference,
+                                notes: e.description,
+                                createdBy: e.createdBy,
+                              })
+                            }
+                          >
+                            History
+                          </button>
+                        </div>
+                      ),
+                    },
+                  ]}
+                  pageSize={20}
+                  pagination={{
+                    page: expensePage,
+                    total: expenses.length,
+                    onChange: setExpensePage,
+                  }}
+                />
+              </>
+            )}
+            {tab === "reports" && (
+              <>
+                <h2>Monthly cash-flow summary</h2>
+                <DataTable
+                  rows={data.trends.map((t) => ({ ...t, id: t.month }))}
+                  columns={[
+                    { label: "Month", render: (r) => r.month },
+                    {
+                      label: "Net collections",
+                      render: (r) => inr(r.collections),
+                    },
+                    { label: "Net expenses", render: (r) => inr(r.expenses) },
+                    {
+                      label: "Trainer payouts",
+                      render: (r) => inr(r.trainerPayouts),
+                    },
+                  ]}
+                />
+                <div className="financial-reports">
+                  <Breakdown
+                    title="Collections by payment method"
+                    values={data.methods}
+                  />
+                  <Breakdown
+                    title="Collections by purchased plan / charge"
+                    values={data.plans}
+                  />
+                  <Breakdown
+                    title="Net expenses by category"
+                    values={data.categories}
+                  />
+                </div>
+                <p>
+                  Outstanding fees:{" "}
+                  <strong>{inr(data.summary.outstanding)}</strong>. Open Fees
+                  Due for member-level receivables, including archived and
+                  expired memberships.
+                </p>
+              </>
+            )}
+          </>
+        )
+      )}
+      {editing && (
+        <ExpenseDialog
+          expense={editing === "new" ? undefined : editing}
+          onClose={() => setEditing(null)}
+        />
+      )}
+      {posting && (
+        <PostExpenseDialog expense={posting} onClose={() => setPosting(null)} />
+      )}
+      {reversing && (
+        <ReasonDialog
+          title={
+            reversing.status === "paid"
+              ? "Reverse expense"
+              : "Void draft expense"
+          }
+          description={
+            reversing.status === "paid"
+              ? "Confirm that this expense payment was returned/reversed. An offsetting cash entry is dated today; the original payment stays in history."
+              : "Void this unpaid draft. It has no cash-flow impact. The draft and audit history are retained."
+          }
+          url={`/financial-expenses/${reversing.id}/reverse`}
+          extra={{ version: reversing.version }}
+          onClose={() => setReversing(null)}
+        />
+      )}
+      {detail && (
+        <Modal title="Transaction details" onClose={() => setDetail(null)}>
+          <div className="modal-body">
+            <h3>
+              {detail.entity} · {inr(detail.amount)}
+            </h3>
+            <p>
+              {detail.id} · {detail.type} · {detail.status}
+            </p>
+            <p>
+              {dateLabel(detail.date || "")} · {detail.method || "—"}
+            </p>
+            <p>Reference: {detail.reference || "—"}</p>
+            <p>Notes: {detail.notes || "—"}</p>
+            <p>Created by: {detail.createdBy || "Legacy / unknown"}</p>
+            {detail.invoiceId && (
+              <button
+                className="btn"
+                onClick={() => {
+                  setInvoice(detail.invoiceId!);
+                  setDetail(null);
+                }}
+              >
+                View invoice / reverse payment
+              </button>
+            )}
+            <h3>Audit history</h3>
+            {data?.events
+              .filter((e) => e.target_id === detail.id)
+              .map((e) => (
+                <section className="financial-history" key={e.id}>
+                  <strong>
+                    {e.action} · {dateLabel(e.created_at)}
+                  </strong>
+                  <p>
+                    Actor {e.actor_id} ·{" "}
+                    {String(
+                      e.after_state.reason || e.after_state.description || "",
+                    )}
+                  </p>
+                  <pre>
+                    {JSON.stringify(
+                      { before: e.before_state, after: e.after_state },
+                      null,
+                      2,
+                    )}
+                  </pre>
+                </section>
+              ))}
+          </div>
+          <div className="modal-actions">
+            <button className="btn" onClick={() => setDetail(null)}>
+              Close
+            </button>
+          </div>
+        </Modal>
+      )}
+      {invoiceId && (
+        <InvoiceDialog id={invoiceId} onClose={() => setInvoice(null)} />
+      )}
     </>
   );
 }

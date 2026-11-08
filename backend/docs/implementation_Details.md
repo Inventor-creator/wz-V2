@@ -2,6 +2,16 @@
 
 Target: PostgreSQL 15+. Apply [`gym_schema.sql`](gym_schema.sql) to a new database. All money is `numeric(12,2)` in INR; dates for subscriptions are inclusive. This is an initial schema, not an in-place migration for an existing database. Inspect and map existing rows before adapting it.
 
+Current feature implementation: migrations 001–008 implement identity/access,
+trainer dashboard, catalogues, trainers and Members. Fees Due/Finances code and
+**009_fees_and_finances.sql** are now prepared. **ALL NEW SQL MIGRATIONS HAVE BEEN
+CREATED BUT NOT APPLIED.** No migration was executed for this financial task,
+including against a disposable database. Deployment/runtime verification is
+**BLOCKED — PENDING MANUAL MIGRATION**. See [fees_finances.md](fees_finances.md),
+[fees_due.md](fees_due.md), [finances.md](finances.md), and
+[financial_testing.md](financial_testing.md). The sections below retain initial
+schema guidance; explicitly noted 009 policies supersede the initial omissions.
+
 ## Model and relationships
 
 | Area | Tables | Purpose |
@@ -14,6 +24,7 @@ Target: PostgreSQL 15+. Apply [`gym_schema.sql`](gym_schema.sql) to a new databa
 | Receipts | `payments`, `payment_allocations`, `refunds` | Receipts, line-level allocation and reversals |
 | Settlement | `trainer_payout_rules`, `trainer_payouts`, `trainer_payout_items` | Policy, payout batches and collection provenance |
 | Costs | `expenses` | Non-trainer operating costs |
+| Financial controls (009) | `financial_requests`, `financial_events`, `refund_allocations`, `invoice_adjustments` | Retry/audit provenance, exact refund allocation and authorized unpaid-charge reductions |
 
 `trainers.user_id` does not exist. A trainer can sign in only when an active `role_assignments` row links that `users.id` to `trainers.id` with `role='trainer'`. An active trainer grant is unique per user and per trainer. Owner/admin grants have `trainer_id IS NULL`. Revocation sets `revoked_at`, retaining history. A trainer profile can exist without login access. The application must check `users.active` and grant revocation on every privileged request.
 
@@ -30,6 +41,18 @@ Each payment belongs to one invoice. `payment_allocations` ties it to individual
 
 ## Billing workflow and idempotency
 
+Implemented 009 policy: each new nonzero gym/PT purchase automatically issues one
+invoice at its immutable price snapshot. A free purchase has no debt. Renewal
+creates a new subscription; overlaps are allowed, but duplicate same-member/type/
+plan/start purchases are rejected. Existing unbilled purchases require explicit
+owner review/approval in Fees Due, not automatic expiry-based billing. Cancelling
+or archiving never waives debt. Owner adjustments reduce unpaid charges only;
+refunds/reversals retain the original receipt and reopen debt. Plan switching uses
+explicit cancellation and a new purchase; catalogue edits do not rewrite history.
+
+The `billing_runs` guidance below describes the base schema's potential batch
+workflow, not an implemented automatic recurring-billing endpoint.
+
 Treat a billing cycle as an application-defined stable `cycle_key` such as `2026-11-monthly`; a unique constraint prevents two run records with the same key. A failed run can be resumed using the same record. The cycle key alone does not prevent duplicate charges: every intended line must have a deterministic `billing_key`, e.g. `gym:<subscription UUID>:<period start>:<period end>`. Use `INSERT ... ON CONFLICT (billing_key) DO NOTHING` while retrying a run. The key must not depend on a random invoice ID. Build one invoice per member and due date as appropriate, insert lines, verify nonempty totals, then mark it `issued` and the run `completed`, preferably in a transaction. An empty draft is harmless but must not be issued.
 
 Renewal creates a **new** `member_plans` or `member_trainer_plan` row with its own dates and snapshot price. Keep historical subscriptions and invoices. Validate active plan and trainer status at creation in application logic. Decide whether overlapping subscriptions are allowed; if not, enforce that policy in a dedicated migration (for example, an exclusion constraint on date ranges), after checking existing data.
@@ -38,7 +61,13 @@ Renewal creates a **new** `member_plans` or `member_trainer_plan` row with its o
 
 For a gateway callback, verify the gateway signature, store its stable payment ID in `(provider, provider_payment_id)`, and use a request idempotency key. On a retry, return the existing payment rather than collecting twice. Mark a receipt completed only after confirmation and set `received_at`. Lock the payment and relevant invoice lines, insert allocations, and commit together. Never mark a completed, allocated payment failed later. The allocation trigger permits an unallocated completed payment while awaiting reconciliation; flag such cases operationally.
 
-Refunds are separate rows and must total no more than the original completed payment. Keep the original payment and allocations for audit. For net cash reporting, subtract refunds; for net revenue by line, the application must assign refunds to original lines. This schema deliberately does **not** include `refund_allocations`, so exact net revenue by service after a partial refund is unavailable. Add that table, with same-invoice and total checks, before offering line-level partial refunds. If a refunded PT collection has already contributed to a paid trainer payout, handle recovery or adjustment explicitly; never delete the historical payout.
+Refunds are separate rows and must total no more than the original completed
+payment. Keep the original payment and allocations for audit. The initial schema
+has no refund attribution; **009 adds `refund_allocations` with deferred total and
+source checks**, and makes `invoice_balances` refund/adjustment-aware. Exact net
+collections by invoice line use these allocations, not proportional guesses.
+Refunding sources reserved by non-cancelled trainer payouts is blocked for explicit
+settlement review. Historical payout items are never deleted to permit refunds.
 
 ## Trainer payouts and expenses
 
@@ -46,13 +75,31 @@ Define a rule for each trainer and effective period. `percent` means a share of 
 
 Build each trainer payout inside a transaction: lock eligible PT allocations, insert a period-specific payout, insert one item per eligible allocation, sum items for display, review, approve, then mark paid with `paid_at` and transfer reference. The unique `allocation_id` on payout items prevents a second settlement. `trainer_payouts` has a unique trainer/period pair; choose nonoverlapping periods in application logic. Draft/approved/paid transitions, freeze after approval, and amount reconciliation need guarded application writes or stored procedures. Expenses are separate from trainer payouts; include only `status='paid'` in cash cost reporting, and exclude `void`.
 
+009 expense policy supersedes the last base-schema shorthand: recorded = editable
+unpaid draft; post records actual paid date/method; reverse preserves original
+cash outflow and adds a dated returned-cash offset. Version checks reject stale
+edits. Draft void has no cash effect. Actual trainer payouts are reported separately;
+no fixed payout estimate is counted as cash expense. Net cash flow is collections
+less refunds, net paid expenses and actual paid trainer payouts, not profit.
+
 ## Permissions and security
 
 Authenticate Google ID tokens server-side: validate issuer, audience, expiry and subject; bind `google_subject` to the user. Email alone is not a reliable identity key for access grants. Do not let a client set `role_assignments`, `received_by`, `approved_by`, payment status, or financial amounts without server authorization. Only owner/super admin can grant/revoke roles; admin can manage members and billing according to product policy; trainer can read only their own profile, assignments and payouts. Enforce those checks in server endpoints and database access policies if clients query PostgreSQL directly. This SQL does not enable row-level security; never expose a broad database credential to browsers.
 
+The preceding RLS statement concerns the initial schema only: later migrations
+close direct browser access. 009 also revokes raw service-role financial writes;
+checked definer RPCs validate the current actor, with backend Google-session and
+write-Origin guards. Fees mutations require staff; full reports/expenses/adjustments/
+historical charge approval require owner/Super Admin. Trainers have no broad
+financial access. This remains a single-gym model, not multi-tenant isolation.
+
 Use separate migration and app DB roles. Grant app access narrowly; consider stored procedures or a service layer for finance writes. Set a fixed `search_path`, use parameterized SQL, audit administrative changes, and keep gateway secrets outside the database. Minimize personal data, restrict exports/backups, and define retention for contact details and payment references. The schema stores transaction references, never card numbers or raw OAuth tokens.
 
 ## Example queries
+
+These are base-schema diagnostic examples, not the new report implementation.
+For refund-aware dated cash/expense reports use the checked financial APIs; do not
+sum only current `expenses.status='paid'` after reversals or use UTC month buckets.
 
 Outstanding issued invoices (a negative balance should be investigated):
 
@@ -112,3 +159,10 @@ SELECT
 ## Known boundaries for the first release
 
 The database enforces identity links, invoice/member consistency, same-invoice allocation, numeric bounds, collection source for payouts, and unique idempotency keys. State transitions, immutable issued invoices, total payout versus items, rule-period overlap, and invoice issue conditions are application responsibilities unless you add database procedures and revoke direct table writes. Historical corrections and refunded allocations need an explicit ledger/credit design before complex refund workflows. These are implementation decisions for Codex to handle consciously, not implicit database guarantees.
+
+009 implements the financial procedures, immutability, compensating entries,
+explicit review, exact monetary validation and coordination with member deletion.
+Remaining boundaries: manual migration/runtime validation; large-ledger SQL-side
+aggregation optimization; legacy-data reconciliation; gateway processing;
+tax/accrual accounting; trainer payout generation/recovery. See the linked guides
+for precise verification limits. Do not weaken constraints to hide missing deployment.
