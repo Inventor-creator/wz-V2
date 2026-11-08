@@ -20,7 +20,6 @@ import {
   ConfirmDialog,
 } from "../../components/ui";
 import type { Trainer } from "../../types/domain";
-import { PlanCards } from "../plans/PlansPage";
 import { PermissionGate } from "../auth/AuthProvider";
 const trainerSchema = z.object({
   name: z.string().trim().min(2),
@@ -96,9 +95,12 @@ export function TrainersPage() {
   return (
     <>
       <PageHeader
-        title="Trainers & PT plans"
+        title="Trainers"
         description="The people behind every personal best."
       >
+        <Link className="btn" to="/personal-training-plans">
+          Manage PT plans
+        </Link>
         <button className="btn primary" onClick={() => setEdit(null)}>
           + Add Trainer
         </button>
@@ -135,12 +137,8 @@ export function TrainersPage() {
                 }{" "}
                 assigned members
                 <br />
-                {
-                  db.personalTrainingPlans.filter(
-                    (p) => p.trainerId === t.id && p.isActive,
-                  ).length
-                }{" "}
-                active PT plans
+                {db.personalTrainingPlans.filter((p) => p.isActive).length}{" "}
+                shared active PT plans
               </div>
               <Link className="btn" to={"/trainers/" + t.id}>
                 View trainer & plans →
@@ -253,7 +251,13 @@ export function TrainerDetails() {
         ]}
       />
       <h2 className="section-title">Personal training plans</h2>
-      <PlanCards db={db} trainerId={trainer.id} />
+      <p className="text-muted">
+        PT plans are shared across trainers. A trainer is selected when
+        assigning a plan to a member.
+      </p>
+      <Link className="btn" to="/personal-training-plans">
+        Manage PT plans
+      </Link>
     </>
   );
 }

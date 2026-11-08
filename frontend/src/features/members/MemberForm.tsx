@@ -125,7 +125,7 @@ export function MemberForm({
           >
             <option value="">Select a PT plan</option>
             {db.personalTrainingPlans
-              .filter((p) => p.trainerId === values.trainerId && p.isActive)
+              .filter((p) => p.isActive)
               .map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name}

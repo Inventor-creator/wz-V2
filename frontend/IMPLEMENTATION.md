@@ -37,7 +37,7 @@ Retrieved the complete `wzv2` project via OpenDesign MCP (`32f05a4d-d17a-4000-a7
 
 `src/design.css` reuses the prototype's complete CSS: dark green-charcoal surfaces, #9fe870 lime, pill buttons, card radii, 232px sidebar, typography fallbacks, 1200/992/650px responsive adaptations, badges, tables, login split layout, modal forms and focus states. `src/app.css` adds React/native-dialog adaptations. No font files or image assets were supplied; the same system fallbacks are used.
 
-Implemented prototype equivalents: Google login/error/unauthorized, finance overview, members, membership plans, trainers and trainer-specific plans, training members dashboard, fees and payment receipts, access management, member details. Deviations: Recharts replaces hand-drawn prototype charts; native dialogs replace custom modal focus trapping; a labeled development-email sign-in replaces prototype role selection; additional security explanations are explicit; no demo controls simulate successful production billing.
+Implemented prototype equivalents: Google login/error/unauthorized, finance overview, members, membership plans, trainers and shared PT plans, training members dashboard, fees and payment receipts, access management, member details. Deviations: Recharts replaces hand-drawn prototype charts; native dialogs replace custom modal focus trapping; a labeled development-email sign-in replaces prototype role selection; additional security explanations are explicit; no demo controls simulate successful production billing.
 
 ## Layout and source map
 
@@ -45,7 +45,7 @@ Implemented prototype equivalents: Google login/error/unauthorized, finance over
 - `src/features/auth`: auth context, session-expiry handling, guards, PermissionGate.
 - `src/components`: shared shell, header/sidebar, tables, status, dialogs, loading/error/empty states, forms and KPI cards.
 - `src/features/members`: filters, numeric expiry sorting, pagination, creation, contact edits, archiving, details and history.
-- `src/features/plans`, `src/features/trainers`: plan/trainer CRUD, trainer-dependent PT plans, scoped dashboard, payout configuration.
+- `src/features/plans`, `src/features/trainers`: shared gym/PT plan CRUD, trainer profiles, scoped dashboard, payout configuration. PT plans are not trainer-owned; assignments choose the trainer separately.
 - `src/features/billing`, `src/features/payments`: billing preview/confirmation, invoice balances, partial payments, receipts.
 - `src/features/finances`, `src/features/access`: reports and privileged email assignments.
 - `src/types/domain.ts`: domain models and separate subscription types.
@@ -72,7 +72,7 @@ The backend callback can continue redirecting to `/`; `/auth/callback` is also s
 - `GET/POST /members`, `GET/PATCH /members/:id`, `POST /members/:id/archive`.
 - `GET/POST /membership-plans`, `PATCH /membership-plans/:id` (archive uses `isActive:false`).
 - `GET/POST /trainers`, `GET/PATCH /trainers/:id`.
-- `GET/POST /personal-training-plans`, `PATCH /personal-training-plans/:id`.
+- Implemented: `GET/POST /personal-training-plans`, `GET/PATCH/DELETE /personal-training-plans/:id`, using shared catalogue fields and fixed calendar days. The dedicated Trainer Plans page does not use `/gym/workspace`. Apply migration 006 after 001–005; see `backend/docs/trainer_plans.md` for safe deletion/audit/security semantics.
 - `POST /billing/preview`: `BillingCharge[]`; no side effects.
 - `POST /billing/run`: `{idempotencyKey:string}` → created invoice count. Enforce unique subscription/billing period and persisted idempotency atomically. Independently charge gym and PT, use historical prices, never mark paid or extend subscriptions implicitly. Use transactionally consistent previews in the production server.
 - `GET /invoices`, `GET /invoices/:id`; `GET/POST /payments`.

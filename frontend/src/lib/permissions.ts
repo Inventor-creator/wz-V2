@@ -31,8 +31,14 @@ export const navigation = [
     roles: ["SUPER_ADMIN", "GYM_OWNER", "GYM_RECEPTIONIST"],
   },
   {
+    path: "/personal-training-plans",
+    label: "Trainer Plans",
+    icon: "plans",
+    roles: ["SUPER_ADMIN", "GYM_OWNER", "GYM_RECEPTIONIST"],
+  },
+  {
     path: "/trainers",
-    label: "Trainers & PT Plans",
+    label: "Trainers",
     icon: "trainers",
     roles: ["SUPER_ADMIN", "GYM_OWNER", "GYM_RECEPTIONIST"],
   },

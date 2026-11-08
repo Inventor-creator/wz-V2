@@ -41,9 +41,7 @@ export interface Trainer {
   phone: string;
   isActive: boolean;
 }
-export interface PersonalTrainingPlan extends GymMembershipPlan {
-  trainerId: string;
-}
+export type PersonalTrainingPlan = GymMembershipPlan;
 export interface MemberGymSubscription {
   id: string;
   memberId: string;

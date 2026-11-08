@@ -23,6 +23,11 @@ const MemberDetails = lazy(() =>
 const PlansPage = lazy(() =>
   import("./features/plans/PlansPage").then((m) => ({ default: m.PlansPage })),
 );
+const TrainerPlansPage = lazy(() =>
+  import("./features/plans/PlansPage").then((m) => ({
+    default: m.TrainerPlansPage,
+  })),
+);
 const TrainersPage = lazy(() =>
   import("./features/trainers/TrainersPage").then((m) => ({
     default: m.TrainersPage,
@@ -111,6 +116,10 @@ export default function App() {
                     element={<MemberDetails />}
                   />
                   <Route path="/membership-plans" element={<PlansPage />} />
+                  <Route
+                    path="/personal-training-plans"
+                    element={<TrainerPlansPage />}
+                  />
                   <Route path="/trainers" element={<TrainersPage />} />
                   <Route
                     path="/trainers/:trainerId"

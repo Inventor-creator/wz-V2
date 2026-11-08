@@ -23,11 +23,11 @@ import {
 } from "../../components/ui";
 export function PlanForm({
   plan,
-  trainerId,
+  training = false,
   onClose,
 }: {
   plan?: GymMembershipPlan;
-  trainerId?: string;
+  training?: boolean;
   onClose: () => void;
 }) {
   const client = useQueryClient();
@@ -38,27 +38,27 @@ export function PlanForm({
     formState: { errors },
   } = useForm<Omit<GymMembershipPlan, "id">>({
     resolver: zodResolver(planSchema),
-    defaultValues: plan || {
-      name: "",
-      price: 2500,
-      duration: trainerId ? 1 : 30,
-      durationUnit: trainerId ? "MONTH" : "DAY",
-      description: "",
-      isActive: true,
+    defaultValues: {
+      name: plan?.name ?? "",
+      price: plan?.price ?? (training ? 6000 : 2500),
+      duration: plan?.duration ?? 30,
+      durationUnit: "DAY",
+      description: plan?.description ?? "",
+      isActive: plan?.isActive ?? true,
     },
   });
   const save = useMutation({
     mutationFn: (v: Omit<GymMembershipPlan, "id">) =>
-      trainerId
+      training
         ? plan
-          ? api.personalTrainingPlans.update(plan.id, { ...v, trainerId })
-          : api.personalTrainingPlans.create({ ...v, trainerId })
+          ? api.personalTrainingPlans.update(plan.id, v)
+          : api.personalTrainingPlans.create(v)
         : plan
           ? api.membershipPlans.update(plan.id, v)
           : api.membershipPlans.create(v),
     onSuccess: async () => {
       await Promise.all(
-        (trainerId ? ["workspace"] : ["membership-plans", "workspace"]).map(
+        [training ? "trainer-plans" : "membership-plans", "workspace"].map(
           (key) => client.invalidateQueries({ queryKey: [key] }),
         ),
       );
@@ -70,8 +70,8 @@ export function PlanForm({
       title={
         plan
           ? "Edit plan"
-          : trainerId
-            ? "Add personal training plan"
+          : training
+            ? "Add trainer plan"
             : "Add membership plan"
       }
       onClose={onClose}
@@ -93,34 +93,19 @@ export function PlanForm({
             {...register("price", { valueAsNumber: true })}
           />
         </Field>
-        <Field
-          label={trainerId ? "Duration" : "Duration (days)"}
-          error={errors.duration?.message}
-          wide={!trainerId}
-        >
+        <Field label="Duration (days)" error={errors.duration?.message} wide>
           <input
             type="number"
             min="1"
             max="36500"
-            aria-label={trainerId ? "Duration" : "Duration (days)"}
-            aria-describedby={trainerId ? undefined : durationHelpId}
+            aria-label="Duration (days)"
+            aria-describedby={durationHelpId}
             {...register("duration", { valueAsNumber: true })}
           />
-          {!trainerId && (
-            <small id={durationHelpId}>
-              Fixed calendar days. Months and years are not approximated.
-            </small>
-          )}
+          <small id={durationHelpId}>
+            Fixed calendar days. Months and years are not approximated.
+          </small>
         </Field>
-        {trainerId && (
-          <Field label="Duration unit">
-            <select {...register("durationUnit")}>
-              <option value="DAY">Days</option>
-              <option value="MONTH">Months</option>
-              <option value="YEAR">Years</option>
-            </select>
-          </Field>
-        )}
         <Field
           label="Description (optional)"
           error={errors.description?.message}
@@ -138,7 +123,7 @@ export function PlanForm({
             <strong>Active</strong>
             <small>
               Available for new{" "}
-              {trainerId ? "training subscriptions" : "memberships"}.
+              {training ? "training subscriptions" : "memberships"}.
             </small>
           </span>
         </label>
@@ -151,12 +136,12 @@ export function PlanForm({
 }
 export function PlanCards({
   db,
-  trainerId,
+  training = false,
   plans: suppliedPlans,
   showAddAction = true,
 }: {
   db?: Database;
-  trainerId?: string;
+  training?: boolean;
   plans?: GymMembershipPlan[];
   showAddAction?: boolean;
 }) {
@@ -170,12 +155,8 @@ export function PlanCards({
     GymMembershipPlan
   >({
     mutationFn: (p: GymMembershipPlan) =>
-      trainerId
-        ? api.personalTrainingPlans.update(p.id, {
-            ...p,
-            trainerId,
-            isActive: !p.isActive,
-          })
+      training
+        ? api.personalTrainingPlans.delete(p.id)
         : api.membershipPlans.delete(p.id),
     onSuccess: async (result) => {
       if ("mode" in result)
@@ -185,22 +166,23 @@ export function PlanCards({
             : "Plan removed from the catalogue. Existing subscriptions and financial history are retained.",
         );
       await Promise.all(
-        (trainerId ? ["workspace"] : ["membership-plans", "workspace"]).map(
+        [training ? "trainer-plans" : "membership-plans", "workspace"].map(
           (key) => client.invalidateQueries({ queryKey: [key] }),
         ),
       );
       setToggle(null);
     },
   });
-  const plans = trainerId
-    ? db?.personalTrainingPlans.filter((p) => p.trainerId === trainerId) || []
-    : (suppliedPlans ?? db?.membershipPlans ?? []);
+  const plans =
+    suppliedPlans ??
+    (training ? db?.personalTrainingPlans : db?.membershipPlans) ??
+    [];
   return (
     <>
       {showAddAction && (
         <div className="section-actions">
           <button className="btn primary" onClick={() => setEdit(null)}>
-            + Add {trainerId ? "PT " : ""}Plan
+            + Add {training ? "PT " : ""}Plan
           </button>
         </div>
       )}
@@ -212,24 +194,12 @@ export function PlanCards({
       {!plans.length && (
         <EmptyState text="No plans match. Add a plan or change your filters." />
       )}
-      <div
-        className={"plan-grid" + (!trainerId ? " membership-plan-grid" : "")}
-      >
+      <div className="plan-grid membership-plan-grid">
         {plans.map((p) => (
-          <article
-            className={"plan-card" + (!trainerId ? " membership-card" : "")}
-            key={p.id}
-          >
-            <StatusBadge
-              status={
-                p.isActive ? "Active" : trainerId ? "Archived" : "Inactive"
-              }
-            />
+          <article className="plan-card membership-card" key={p.id}>
+            <StatusBadge status={p.isActive ? "Active" : "Inactive"} />
             <h2>{p.name}</h2>
-            <p
-              className={!trainerId ? "plan-description" : undefined}
-              title={p.description}
-            >
+            <p className="plan-description" title={p.description}>
               {p.description}
             </p>
             <div className="price">
@@ -242,7 +212,7 @@ export function PlanCards({
             <div className="bottom">
               <span className="plan-member-count">
                 {p.activeMembersCount ??
-                  (trainerId
+                  (training
                     ? db?.trainingSubscriptions || []
                     : db?.gymSubscriptions || []
                   ).filter(
@@ -258,11 +228,7 @@ export function PlanCards({
                   Edit
                 </button>
                 <button className="btn small" onClick={() => setToggle(p)}>
-                  {trainerId
-                    ? p.isActive
-                      ? "Archive"
-                      : "Reactivate"
-                    : "Delete"}
+                  Delete
                 </button>
               </div>
             </div>
@@ -272,39 +238,31 @@ export function PlanCards({
       {edit !== undefined && (
         <PlanForm
           plan={edit || undefined}
-          trainerId={trainerId}
+          training={training}
           onClose={() => setEdit(undefined)}
         />
       )}
       {toggle && (
         <ConfirmDialog
-          title={
-            trainerId
-              ? toggle.isActive
-                ? "Archive plan?"
-                : "Reactivate plan?"
-              : "Delete membership plan?"
-          }
-          description={
-            trainerId
-              ? "Historical subscriptions and prices will not be changed."
-              : `Remove ${toggle.name} from the catalogue? Unused plans are permanently deleted. Plans with subscription history are retained but cannot be purchased again. Existing subscription dates, prices and invoices are not changed.`
-          }
+          title={training ? "Delete trainer plan?" : "Delete membership plan?"}
+          description={`Remove ${toggle.name} from the catalogue? Unused plans are permanently deleted. Plans with subscription history are retained but cannot be purchased again. Existing subscription dates, prices and invoices are not changed.${training ? " Trainer assignments and payouts are retained." : ""}`}
           onClose={() => setToggle(null)}
           onConfirm={() => mutate.mutate(toggle)}
           pending={mutate.isPending}
           error={mutate.error}
-          confirmLabel={trainerId ? "Confirm" : "Delete plan"}
-          danger={!trainerId}
+          confirmLabel="Delete plan"
+          danger
         />
       )}
     </>
   );
 }
-export function PlansPage() {
+export function PlansPage({ training = false }: { training?: boolean }) {
   const q = useQuery({
-    queryKey: ["membership-plans"],
-    queryFn: api.membershipPlans.list,
+    queryKey: [training ? "trainer-plans" : "membership-plans"],
+    queryFn: training
+      ? api.personalTrainingPlans.list
+      : api.membershipPlans.list,
   });
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
@@ -315,17 +273,23 @@ export function PlansPage() {
   return (
     <>
       <PageHeader
-        title="Membership plans"
-        description="Flexible plans. Consistent progress."
+        title={training ? "Trainer plans" : "Membership plans"}
+        description={
+          training
+            ? "Shared personal training plans. Choose a trainer when assigning a member."
+            : "Flexible plans. Consistent progress."
+        }
       >
         <button className="btn primary" onClick={() => setCreating(true)}>
-          + Add Plan
+          + Add {training ? "PT " : ""}Plan
         </button>
       </PageHeader>
       {q.error && <ErrorState error={q.error} retry={() => void q.refetch()} />}
       <div className="toolbar panel membership-toolbar">
         <input
-          aria-label="Search membership plans"
+          aria-label={
+            training ? "Search trainer plans" : "Search membership plans"
+          }
           placeholder="Search plans…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
@@ -341,6 +305,7 @@ export function PlansPage() {
         </select>
       </div>
       <PlanCards
+        training={training}
         showAddAction={false}
         plans={q.data.filter(
           (p) =>
@@ -348,7 +313,12 @@ export function PlansPage() {
             (!status || p.isActive === (status === "active")),
         )}
       />
-      {creating && <PlanForm onClose={() => setCreating(false)} />}
+      {creating && (
+        <PlanForm training={training} onClose={() => setCreating(false)} />
+      )}
     </>
   );
+}
+export function TrainerPlansPage() {
+  return <PlansPage training />;
 }

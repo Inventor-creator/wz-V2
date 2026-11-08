@@ -31,6 +31,7 @@ export const MOCK_MODE =
   import.meta.env.DEV && import.meta.env.VITE_MOCK_API === "true";
 let db = seed();
 const deletedMembershipPlans = new Set<string>();
+const deletedTrainerPlans = new Set<string>();
 let session: User | null = null;
 const uid = () => crypto.randomUUID();
 const clone = <T>(v: T): T => structuredClone(v);
@@ -59,8 +60,8 @@ function scoped(): Database {
     members: db.members.filter((m) => ids.has(m.id)),
     trainers: db.trainers.filter((t) => t.id === session?.trainerId),
     trainingSubscriptions,
-    personalTrainingPlans: db.personalTrainingPlans.filter(
-      (p) => p.trainerId === session?.trainerId,
+    personalTrainingPlans: db.personalTrainingPlans.filter((p) =>
+      trainingSubscriptions.some((s) => s.planId === p.id),
     ),
     gymSubscriptions: [],
     membershipPlans: [],
@@ -216,10 +217,13 @@ export const api = {
         if (!plan) throw new Error("Gym plan unavailable");
         const pt = db.personalTrainingPlans.find(
           (p) =>
-            p.id === v.ptPlanId && p.trainerId === v.trainerId && p.isActive,
+            p.id === v.ptPlanId && p.isActive && !deletedTrainerPlans.has(p.id),
         );
-        if (v.trainerId && !pt)
-          throw new Error("PT plan does not belong to selected trainer");
+        if (
+          v.trainerId &&
+          (!pt || !db.trainers.some((t) => t.id === v.trainerId && t.isActive))
+        )
+          throw new Error("Choose an active trainer and available PT plan");
         const id = uid();
         db.members.push({
           id,
@@ -247,7 +251,7 @@ export const api = {
           db.trainingSubscriptions.push({
             id: uid(),
             memberId: id,
-            trainerId: pt.trainerId,
+            trainerId: v.trainerId,
             planId: pt.id,
             startDate: v.ptStartDate,
             endDate: calculateEndDate(
@@ -359,24 +363,63 @@ export const api = {
   },
   personalTrainingPlans: {
     list: () =>
-      MOCK_MODE
-        ? Promise.resolve(clone(scoped().personalTrainingPlans))
-        : request<PersonalTrainingPlan[]>("GET", "/personal-training-plans"),
+      action<PersonalTrainingPlan[]>(
+        "/personal-training-plans",
+        "GET",
+        "/personal-training-plans",
+        undefined,
+        () =>
+          db.personalTrainingPlans
+            .filter((p) => !deletedTrainerPlans.has(p.id))
+            .map((p) => ({
+              ...p,
+              activeMembersCount: new Set(
+                db.trainingSubscriptions
+                  .filter(
+                    (s) =>
+                      s.planId === p.id &&
+                      s.status !== "CANCELLED" &&
+                      s.startDate <= today() &&
+                      s.endDate >= today() &&
+                      db.members.some(
+                        (m) => m.id === s.memberId && m.status === "ACTIVE",
+                      ),
+                  )
+                  .map((s) => s.memberId),
+              ).size,
+              hasHistory: db.trainingSubscriptions.some(
+                (s) => s.planId === p.id,
+              ),
+            })),
+      ),
     create: (v: Omit<PersonalTrainingPlan, "id">) =>
-      savePlan(v, undefined, v.trainerId),
+      savePlan(v, undefined, true),
     update: (id: string, v: Omit<PersonalTrainingPlan, "id">) =>
-      savePlan(v, id, v.trainerId),
-    archive: (id: string) =>
+      savePlan(v, id, true),
+    delete: (id: string) =>
       action(
-        "/trainers",
-        "PATCH",
+        "/personal-training-plans",
+        "DELETE",
         "/personal-training-plans/" + id,
-        { isActive: false },
+        undefined,
         () => {
-          const p = db.personalTrainingPlans.find((p) => p.id === id);
+          const p = db.personalTrainingPlans.find(
+            (p) => p.id === id && !deletedTrainerPlans.has(id),
+          );
           if (!p) throw new Error("Plan not found");
-          p.isActive = false;
-          return p;
+          const history = db.trainingSubscriptions.some((s) => s.planId === id);
+          if (history) {
+            p.isActive = false;
+            deletedTrainerPlans.add(id);
+          } else
+            db.personalTrainingPlans = db.personalTrainingPlans.filter(
+              (p) => p.id !== id,
+            );
+          const result: MembershipPlanDeletion = {
+            id,
+            mode: history ? "REMOVED_FROM_CATALOG" : "DELETED",
+          };
+          return result;
         },
       ),
   },
@@ -577,40 +620,33 @@ function billingPreview(): BillingCharge[] {
 function savePlan(
   v: Omit<GymMembershipPlan, "id">,
   id?: string,
-  trainerId?: string,
+  training = false,
 ) {
   return action(
-    trainerId ? "/trainers" : "/membership-plans",
+    training ? "/personal-training-plans" : "/membership-plans",
     id ? "PATCH" : "POST",
-    `/${trainerId ? "personal-training-plans" : "membership-plans"}${id ? "/" + id : ""}`,
+    `/${training ? "personal-training-plans" : "membership-plans"}${id ? "/" + id : ""}`,
     v,
     () => {
       const parsed = planSchema.parse(v);
-      if (!trainerId) {
-        if (v.durationUnit !== "DAY")
-          throw new Error("Membership plans use fixed calendar days");
-        if (id && deletedMembershipPlans.has(id))
-          throw new Error("Plan not found");
-        if (
-          db.membershipPlans.some(
-            (p) => p.id !== id && p.name === v.name.trim(),
-          )
-        )
-          throw new Error(
-            "A plan with this name already exists, including retained history",
-          );
-      }
-      const list = trainerId ? db.personalTrainingPlans : db.membershipPlans;
+      const list = training ? db.personalTrainingPlans : db.membershipPlans;
+      const deleted = training ? deletedTrainerPlans : deletedMembershipPlans;
+      if (v.durationUnit !== "DAY")
+        throw new Error("Plans use fixed calendar days");
+      if (id && deleted.has(id)) throw new Error("Plan not found");
+      if (list.some((p) => p.id !== id && p.name === v.name.trim()))
+        throw new Error(
+          "A plan with this name already exists, including retained history",
+        );
       if (id && !list.some((p) => p.id === id))
         throw new Error("Plan not found");
       const item = {
         ...parsed,
         id: id || uid(),
-        ...(trainerId ? { trainerId } : {}),
       };
       const existing = list.find((p) => p.id === id);
       if (existing) Object.assign(existing, item);
-      else if (trainerId) db.personalTrainingPlans.push({ ...item, trainerId });
+      else if (training) db.personalTrainingPlans.push(item);
       else db.membershipPlans.push(item);
       return item;
     },
@@ -805,6 +841,7 @@ function mockTrainerDashboard(
 export function resetMock() {
   db = seed();
   deletedMembershipPlans.clear();
+  deletedTrainerPlans.clear();
   session = null;
   billingKeys.clear();
 }

@@ -55,7 +55,7 @@ Catalogue edits are last-write-wins; there is no optimistic version/ETag check. 
 
 ## UI and verification
 
-The existing OpenDesign card/dialog styles are preserved, with real create/edit/delete forms, status/search filters, confirmation, loading, empty/error states, cache refresh and deletion feedback. Inactive plans can be re-enabled through Edit. PT-plan management is a separate workflow and retains its existing behavior.
+The existing OpenDesign card/dialog styles are preserved, with real create/edit/delete forms, status/search filters, confirmation, loading, empty/error states, cache refresh and deletion feedback. Inactive plans can be re-enabled through Edit. Shared PT-plan management now uses the same aligned layout; see [trainer_plans.md](trainer_plans.md) and migration 006.
 
 Tests execute the full supplied base schema and migrations 001–005 in a disposable PostgreSQL-compatible database. They verify free plans, validation, permissions, expiry counts, edits preserving price/date/invoice snapshots, safe deletion, inactive/deleted purchase rejection, audit retention and database-role restrictions. HTTP tests use real session guards with isolated database doubles; frontend tests exercise create/edit/delete and failure handling without a workspace API.
 

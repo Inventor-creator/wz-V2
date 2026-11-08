@@ -13,6 +13,11 @@ Membership plan create/edit/delete routes are implemented as well. Apply migrati
 Referenced plans are removed from the catalogue without deleting subscription or
 financial history. Duration is stored in fixed calendar days.
 
+Shared trainer/PT plan CRUD is implemented at `/personal-training-plans`.
+Apply migration `006` after `001`–`005`; see
+[`docs/trainer_plans.md`](docs/trainer_plans.md). Trainer selection belongs to the
+member assignment, not the plan catalogue. Deletion preserves PT and payout history.
+
 A FastAPI + Supabase Python API scaffold with Google OAuth login.
 
 This is a **skeleton**: the infrastructure is wired up and working, while all

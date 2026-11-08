@@ -25,6 +25,11 @@ Apply backend migration `005` after `001`–`004`. Referenced plans are removed 
 the catalogue while historical memberships and invoices are retained; unused plans
 are permanently deleted. See `backend/docs/membership_plans.md`.
 
+**Trainer Plans** at `/personal-training-plans` supports live catalogue CRUD,
+search/status filters and safe deletion without a workspace snapshot. Apply
+backend migration `006` after `001`–`005`. Plans are shared; select the trainer
+separately when assigning a member. See `backend/docs/trainer_plans.md`.
+
 ## Checks
 
 ```sh
@@ -39,7 +44,7 @@ npm run preview
 
 - Protected routes and permission-based navigation for four roles.
 - Members, separate gym/PT subscriptions, contact edits, archive confirmation and history.
-- Membership plans, trainers and trainer-specific PT plans with validated forms.
+- Membership plans, trainers and shared PT plans with validated forms.
 - Trainer-scoped dashboard with expiry sorting and configured payout estimates.
 - Billing preview, confirmation and development idempotency protection.
 - Outstanding fees, partial payment logging and payment receipts.

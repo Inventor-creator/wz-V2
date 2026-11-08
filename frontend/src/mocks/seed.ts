@@ -63,18 +63,18 @@ export function seed(): Database {
       isActive: true,
     }),
   );
-  const personalTrainingPlans = trainers.flatMap((t, i) =>
+  const personalTrainingPlans = trainers.flatMap((_, i) =>
     [1, 2].map((n) => ({
       id: `pt${i}${n}`,
-      trainerId: t.id,
-      name: n === 1 ? "Strength Foundations" : "Performance Plus",
+      name:
+        (n === 1 ? "Strength Foundations" : "Performance Plus") + ` ${i + 1}`,
       price: n === 1 ? 6000 : 10000,
-      duration: 1,
-      durationUnit: "MONTH" as const,
+      duration: 30,
+      durationUnit: "DAY" as const,
       description:
         n === 1
-          ? "12 focused one-to-one training sessions."
-          : "20 personalised sessions and progress reviews.",
+          ? "One-to-one strength training over 30 days."
+          : "30 days of personalised training and progress reviews.",
       isActive: true,
     })),
   );
