@@ -13,6 +13,7 @@ export function SubscriptionDialog({
   memberId?: string;
 }) {
   const [member, setMember] = useState(memberId);
+  const [memberSearch, setMemberSearch] = useState("");
   const [kind, setKind] = useState("GYM");
   const [planId, setPlan] = useState("");
   const [trainerId, setTrainer] = useState("");
@@ -26,6 +27,28 @@ export function SubscriptionDialog({
     queryFn: api.members.list,
   });
   const command = useFinancialCommand(onClose);
+  const search = memberSearch.trim().toLowerCase();
+  const matchingMembers = (members.data?.members || []).filter(
+    (m) =>
+      m.status === "ACTIVE" &&
+      [m.fullName, m.memberNumber, m.id, m.phone, m.email].some((value) =>
+        value?.toLowerCase().includes(search),
+      ),
+  );
+  const availablePlans = (
+    (kind === "GYM"
+      ? options.data?.membershipPlans
+      : options.data?.personalTrainingPlans) || []
+  ).filter((plan) => plan.isActive);
+  const availableTrainers = (options.data?.trainers || []).filter(
+    (trainer) => trainer.isActive,
+  );
+  const selectKind = (next: string) => {
+    if (next === kind) return;
+    setKind(next);
+    setPlan("");
+    setTrainer("");
+  };
   return (
     <Modal
       title="New membership / renewal"
@@ -53,7 +76,8 @@ export function SubscriptionDialog({
             Creates a new subscription at the current catalogue price and issues
             its fee obligation atomically. Previous debts and purchases remain
             unchanged. Check dates before confirming; renewals do not
-            automatically cancel old plans.
+            automatically cancel old plans. Choose Gym membership or Personal
+            training below; renew each separately when both are needed.
           </p>
           {options.isPending || members.isPending ? (
             <LoadingSkeleton />
@@ -64,6 +88,20 @@ export function SubscriptionDialog({
               disabled={command.isPending}
               className="financial-fieldset"
             >
+              <Field label="Search members for renewal">
+                <input
+                  type="search"
+                  placeholder="Name, member ID, phone or email"
+                  value={memberSearch}
+                  onChange={(e) => {
+                    setMemberSearch(e.target.value);
+                    setMember("");
+                  }}
+                />
+              </Field>
+              {!matchingMembers.length && (
+                <p role="status">No eligible members match your search.</p>
+              )}
               <Field label="Member">
                 <select
                   required
@@ -71,38 +109,44 @@ export function SubscriptionDialog({
                   onChange={(e) => setMember(e.target.value)}
                 >
                   <option value="">Select member</option>
-                  {members.data?.members
-                    .filter((m) => m.status === "ACTIVE")
-                    .map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.fullName} · {m.memberNumber}
-                      </option>
-                    ))}
+                  {matchingMembers.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.fullName} · {m.memberNumber}
+                    </option>
+                  ))}
                 </select>
               </Field>
-              <Field label="Subscription type">
-                <select
-                  value={kind}
-                  onChange={(e) => {
-                    setKind(e.target.value);
-                    setPlan("");
-                  }}
-                >
-                  <option value="GYM">Gym</option>
-                  <option value="PT">Personal training</option>
-                </select>
-              </Field>
-              <Field label="Plan">
+              <div className="field">
+                <span>Renewal type</span>
+                <div className="actions" role="group" aria-label="Renewal type">
+                  <button
+                    type="button"
+                    className={kind === "GYM" ? "btn primary" : "btn"}
+                    aria-pressed={kind === "GYM"}
+                    onClick={() => selectKind("GYM")}
+                  >
+                    Gym membership
+                  </button>
+                  <button
+                    type="button"
+                    className={kind === "PT" ? "btn primary" : "btn"}
+                    aria-pressed={kind === "PT"}
+                    onClick={() => selectKind("PT")}
+                  >
+                    Personal training
+                  </button>
+                </div>
+              </div>
+              <Field label={kind === "PT" ? "Trainer plan" : "Plan"}>
                 <select
                   required
                   value={planId}
                   onChange={(e) => setPlan(e.target.value)}
                 >
-                  <option value="">Select plan</option>
-                  {(kind === "GYM"
-                    ? options.data?.membershipPlans
-                    : options.data?.personalTrainingPlans
-                  )?.map((p) => (
+                  <option value="">
+                    {kind === "PT" ? "Select trainer plan" : "Select plan"}
+                  </option>
+                  {availablePlans.map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.name} · INR {p.price} · {p.duration} days
                     </option>
@@ -117,7 +161,7 @@ export function SubscriptionDialog({
                     onChange={(e) => setTrainer(e.target.value)}
                   >
                     <option value="">Select trainer</option>
-                    {options.data?.trainers.map((t) => (
+                    {availableTrainers.map((t) => (
                       <option key={t.id} value={t.id}>
                         {t.name}
                       </option>
@@ -125,6 +169,17 @@ export function SubscriptionDialog({
                   </select>
                 </Field>
               )}
+              {kind === "PT" &&
+                (!availablePlans.length || !availableTrainers.length) && (
+                  <p role="status">
+                    {!availablePlans.length
+                      ? "No active trainer plans are available. Add or reactivate a plan in Trainer Plans. "
+                      : ""}
+                    {!availableTrainers.length
+                      ? "No active trainers are available. Add or reactivate a trainer in Trainers."
+                      : ""}
+                  </p>
+                )}
               <Field label="Start date">
                 <input
                   type="date"

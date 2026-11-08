@@ -1,5 +1,11 @@
 # Fees Due
 
+The renewal dialog provides visible **Gym membership** and **Personal training**
+choices. Personal training exposes separate **Trainer plan** and **Trainer**
+selectors, requires both, and lists active options only. Member search supports
+name, member number/UUID, phone and email. Gym and PT renewals remain separate
+atomic purchases; switching renewal type clears stale plan/trainer selections.
+
 Dedicated implementation: `frontend/src/features/payments/FeesPage.tsx`,
 `financialShared.tsx`, `SubscriptionDialog.tsx`, `src/lib/financialApi.ts`,
 `src/lib/financial.ts`, and backend `Routes/financialRoutes.py`.
