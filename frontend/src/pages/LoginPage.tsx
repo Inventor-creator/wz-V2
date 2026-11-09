@@ -14,7 +14,7 @@ export function LoginPage() {
     const backendUrl = (
       import.meta.env.VITE_API_URL || "http://localhost:8080"
     ).replace(/\/+$/, "");
-    window.location.assign(`${backendUrl}/auth/login`);
+    window.location.href = `${backendUrl}/auth/login`;
   };
 
   if (user) return <Navigate to={landing(user.role)} replace />;

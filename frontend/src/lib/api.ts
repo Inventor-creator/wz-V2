@@ -178,7 +178,7 @@ export const auth = {
   async logout() {
     session = null;
     if (!MOCK_MODE)
-      window.location.assign(http.defaults.baseURL + "/auth/logout");
+      window.location.href = http.defaults.baseURL + "/auth/logout";
   },
 };
 export const api = {
