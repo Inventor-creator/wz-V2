@@ -106,6 +106,7 @@ export default function App() {
             <Route path="/login/error" element={<LoginError />} />
             <Route path="/auth/callback" element={<Home />} />
             <Route path="/unauthorized" element={<Unauthorized />} />
+
             <Route element={<ProtectedRoute />}>
               <Route element={<AppShell />}>
                 <Route path="/" element={<Home />} />
